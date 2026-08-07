@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: sales_copilot_db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: sales_copilot
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: sales_copilot_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # The FastAPI application service and worker services will be added here once containerized running is needed
+  # web:
+  #   build: .
+  #   container_name: sales_copilot_web
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     - DATABASE_URL=postgresql://postgres:postgres@db:5432/sales_copilot
+  #     - REDIS_URL=redis://redis:6379/0
+  #     - ENCRYPTION_KEY=3J3V5eT3k7z2b8d9V6c7X8z9y0A1B2C3D4E5F6G7H8I=
+  #     - STT_PROVIDER=mock
+  #     - LLM_PROVIDER=mock
+  #     - TTS_PROVIDER=mock
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
