@@ -17,6 +17,8 @@ coverage/
 .parcel-cache/
 .turbo/
 .vite/
+.next/
+*.tsbuildinfo
 *.local
 # Accidental root lockfile (the Node project lives under frontend/).
 /package-lock.json

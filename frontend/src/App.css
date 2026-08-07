@@ -1,7 +1,0 @@
-.panel { border: 1px solid #e2e8f0; border-radius: 1rem; background: white; box-shadow: 0 1px 2px rgb(15 23 42 / .03); }
-.panel-head { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #e2e8f0; padding: .9rem 1rem; }
-.panel-head h2 { margin: 0; font-size: 1rem; font-weight: 800; color: #0f172a; }
-.eyebrow { margin: 0 0 .15rem; font-size: .65rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #64748b; }
-.live-dot { display: inline-flex; align-items: center; gap: .35rem; font-size: .7rem; font-weight: 800; color: #059669; }
-.live-dot::before { content: ''; height: .45rem; width: .45rem; border-radius: 999px; background: #10b981; box-shadow: 0 0 0 4px #d1fae5; }
-.drawer { margin-top: 1rem; border: 1px solid #e2e8f0; border-radius: 1rem; background: #fff; box-shadow: 0 1px 2px rgb(15 23 42 / .03); }
