@@ -12,7 +12,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from app.config import settings
 from app.db.database import Base
-from app.db.base import Customer, AgentSession, Call, Transcript, ProductOffer, KYCDoc, FollowUp, ConsentLog
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

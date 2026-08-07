@@ -1,28 +1,86 @@
-# Logs
-logs
+# Logs and runtime output
+logs/
 *.log
+*.log.*
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+# JavaScript dependencies and build output
+node_modules/
+dist/
+dist-ssr/
+build/
+coverage/
+.parcel-cache/
+.turbo/
+.vite/
 *.local
+# Accidental root lockfile (the Node project lives under frontend/).
+/package-lock.json
 
-# Editor directories and files
+# Python environments and generated files
+.venv/
+venv/
+env/
+myenv/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.ipynb_checkpoints/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Local runtime data and downloaded model artifacts
+*.db
+*.sqlite
+*.sqlite3
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+*.gguf
+.huggingface/
+
+# Temporary installation and test output
+.tmp-tests/
+work/
+tmp/
+temp/
+*.tmp
+*.temp
+
+# IDE and editor files
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
+*.code-workspace
 .DS_Store
+Thumbs.db
+Desktop.ini
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
 
-
-*.env
-*.env.example
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+!.env.template

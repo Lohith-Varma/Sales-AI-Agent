@@ -1,7 +1,6 @@
 import uuid
 import json
 import datetime
-from typing import Optional, List
 from sqlalchemy import (
     Column,
     String,

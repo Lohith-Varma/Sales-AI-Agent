@@ -1,0 +1,2 @@
+Pay-in-3 is a payment product that divides an eligible purchase into three scheduled payments.
+Representatives must not promise approval. Customers should be directed to the approved application flow for an eligibility assessment.

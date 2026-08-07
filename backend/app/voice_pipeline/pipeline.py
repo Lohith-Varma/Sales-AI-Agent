@@ -1,9 +1,9 @@
 import logging
-from typing import AsyncGenerator, Dict, Any, Optional
+from typing import AsyncGenerator, Dict, Any
 from sqlalchemy.orm import Session
 
 from app.voice_pipeline.interfaces import SpeechToTextProvider, LLMProvider, TextToSpeechProvider
-from app.db.base import Transcript, ConsentLog, Call
+from app.db.base import Transcript, ConsentLog
 
 logger = logging.getLogger(__name__)
 

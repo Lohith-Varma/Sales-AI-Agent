@@ -1,12 +1,10 @@
 import os
-import uuid
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.database import Base
 from app.db.base import Customer, Call, ConsentLog, Transcript
-from app.compliance.encryption import decrypt
 from app.telephony.mock_source import mock_audio_stream
 from app.voice_pipeline.pipeline import VoicePipeline
 from app.voice_pipeline.stt_provider import MockSTTProvider

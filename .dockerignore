@@ -1,0 +1,103 @@
+# Source-control metadata
+.git
+.gitignore
+.gitattributes
+
+# Local and CI environment files. Runtime configuration must be injected by the
+# deployment platform or docker compose, never copied into the image.
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Python bytecode, caches, and virtual environments
+**/__pycache__/
+**/*.py[cod]
+.venv/
+venv/
+env/
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+
+# Packaging, test, and coverage output
+build/
+dist/
+*.egg-info/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+junit.xml
+
+# Tests are not required in the production runtime image.
+tests/
+
+# Runtime data must be mounted into the container. It can contain proprietary
+# product material, customer PII, and machine-specific Chroma persistence.
+data/documents/
+data/chroma/
+data/audio/
+data/transcripts/
+recordings/
+
+# Downloaded model weights and framework caches are created in an explicit Docker
+# cache or runtime volume; local workstation copies must not enter the build.
+models/
+.models/
+huggingface/
+torch-cache/
+whisper-cache/
+
+# Logs, temporary files, and process state
+logs/
+*.log
+*.log.*
+*.pid
+*.pid.lock
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Editor and operating-system metadata
+.idea/
+.vscode/
+*.code-workspace
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Frontend dependencies and build output if a React project shares the repository
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/
+.next/
+out/
+coverage/
+storybook-static/
+
+# Local orchestration overrides and developer scratch space
+docker-compose.override.yml
+compose.override.yml
+work/
+scratch/
+benchmarks/results/
+site/
+
+# LangGraph/LangChain local state
+.langgraph_api/
+.langgraph_api_data/
+.langchain/

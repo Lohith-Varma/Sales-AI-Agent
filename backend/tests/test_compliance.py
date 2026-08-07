@@ -1,5 +1,5 @@
 import pytest
-from app.compliance.encryption import encrypt, decrypt, cipher
+from app.compliance.encryption import encrypt, decrypt
 
 def test_encryption_decryption_cycle():
     """Verify that a string can be encrypted and successfully decrypted back to the original."""

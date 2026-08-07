@@ -5,9 +5,8 @@ import sys
 # Ensure backend directory is in path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.db.database import SessionLocal, Base, engine
+from app.db.database import SessionLocal
 from app.db.base import Customer, Call, ConsentLog, Transcript
-from app.compliance.encryption import decrypt
 from app.telephony.mock_source import mock_audio_stream
 from app.voice_pipeline.pipeline import VoicePipeline
 from app.voice_pipeline.stt_provider import MockSTTProvider

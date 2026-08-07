@@ -1,0 +1,12 @@
+{
+  "faqs": [
+    {
+      "question": "What is Pay-in-3?",
+      "answer": "Pay-in-3 splits an eligible purchase into three scheduled payments."
+    },
+    {
+      "question": "How is eligibility decided?",
+      "answer": "Eligibility is assessed during the application using the approved policy."
+    }
+  ]
+}
