@@ -25,12 +25,11 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: Optional[str] = None
     DEEPGRAM_API_KEY: Optional[str] = None
     ELEVENLABS_API_KEY: Optional[str] = None
+    ELEVENLABS_VOICE_ID: str = "21m00Tcm4TlvDq8ikWAM"
+    ELEVENLABS_MODEL_ID: str = "eleven_flash_v2_5"
 
     # Model parameters
     GEMINI_MODEL: str = "gemini-3.1-flash-lite"
-    WHISPER_MODEL: str = "base"
-    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
-
     # Use SQLite for testing or if PG is not configured
     USE_SQLITE: bool = True
 

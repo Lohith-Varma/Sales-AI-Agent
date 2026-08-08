@@ -78,7 +78,8 @@ class Settings(BaseSettings):
     jwt_secret: SecretStr | None = None
 
     # Core CRM integration. Set CORE_API_URL empty for isolated AI-only runs.
-    core_api_url: str | None = "http://127.0.0.1:8001"
+    core_api_url: str | None = "http://127.0.0.1:8000"
+
     internal_api_key: SecretStr | None = None
     core_persistence_timeout_seconds: PositiveSeconds = 2.0
     core_persistence_max_retries: Annotated[int, Field(ge=0, le=5)] = 2
@@ -97,7 +98,13 @@ class Settings(BaseSettings):
     gemini_analysis_temperature: Probability = 0.0
     gemini_response_temperature: Probability = 0.2
 
+    # ElevenLabs Voice
+    elevenlabs_api_key: SecretStr | None = None
+    elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
+    elevenlabs_model_id: str = "eleven_flash_v2_5"
+
     # Whisper and audio
+
     whisper_model: str = "base"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"

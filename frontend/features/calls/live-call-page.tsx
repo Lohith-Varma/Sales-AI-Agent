@@ -12,9 +12,11 @@ import {
   Send,
   ShieldCheck,
   Sparkles,
+  Volume2,
   Wifi,
   WifiOff,
 } from "lucide-react";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -35,6 +37,7 @@ import { CallActionBar } from "@/features/calls/call-action-bar";
 import { CustomerPanel } from "@/features/calls/customer-panel";
 import { PostCallSheet } from "@/features/calls/post-call-sheet";
 import { TranscriptPanel } from "@/features/calls/transcript-panel";
+import { useAudioPlayer } from "@/features/calls/use-audio-player";
 import type { TranscriptItem } from "@/features/calls/types";
 import { useMicrophoneStream } from "@/features/calls/use-microphone-stream";
 import { CopilotPanel } from "@/features/copilot/copilot-panel";
@@ -76,6 +79,7 @@ export function LiveCallPage() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [wrapUpOpen, setWrapUpOpen] = useState(false);
   const [sequence, setSequence] = useState(0);
+  const audioPlayer = useAudioPlayer();
   const setup = useForm<SetupInput>({
     resolver: zodResolver(setupSchema),
     defaultValues: { customerId: "", direction: "inbound" },
@@ -122,11 +126,14 @@ export function LiveCallPage() {
         setWrapUpOpen(true);
         toast.success("Post-call CRM summary is ready for review");
       } else if (event.type === "status") setWorkflowStage(event.stage);
-      else if (event.type === "error")
+      else if (event.type === "audio_stream") {
+        audioPlayer.playAudioChunk(event.audio_base64, event.format);
+      } else if (event.type === "error")
         toast.error("Copilot event failed", { description: event.message });
     },
-    [customer],
+    [customer, audioPlayer],
   );
+
 
   const socket = useCopilotSocket({
     onEvent: handleRealtimeEvent,
@@ -295,9 +302,19 @@ export function LiveCallPage() {
         ? "danger"
         : "warning";
   const connectionLabel =
-    socket.status === "connected" ? "AI connected" : titleCase(socket.status);
+    socket.status === "connected"
+      ? "AI Connected"
+      : socket.status === "connecting"
+        ? "Connecting to AI..."
+        : socket.status === "reconnecting"
+          ? "Reconnecting to AI..."
+          : socket.status === "error"
+            ? "AI Connection Error"
+            : "AI Disconnected";
   const canStream = consent && socket.status === "connected";
+
   const endCall = async () => {
+    audioPlayer.stop();
     await microphone.stop();
     const sent = socket.sendControl({
       type: "call_end",
@@ -316,8 +333,10 @@ export function LiveCallPage() {
     if (!sent || !latestResult) setWrapUpOpen(true);
   };
   const resetWorkspace = async () => {
+    audioPlayer.stop();
     await microphone.stop();
     socket.disconnect();
+
     setCustomer(null);
     setCallId(null);
     setConsent(false);
@@ -444,12 +463,31 @@ export function LiveCallPage() {
               )}
               {connectionLabel}
             </Badge>
-            {workflowStage ? (
+            {audioPlayer.isPlaying ? (
+              <Badge variant="primary" className="animate-pulse bg-emerald-600 text-white">
+                <Volume2 className="size-3" />
+                AI is speaking...
+              </Badge>
+            ) : workflowStage === "transcribing" ? (
+              <Badge variant="warning" className="animate-pulse">
+                <Loader2 className="size-3 animate-spin" />
+                AI is thinking...
+              </Badge>
+            ) : microphone.status === "active" ? (
+              <Badge variant="primary" className="bg-blue-600 text-white">
+                <Mic className="size-3" />
+                Listening...
+              </Badge>
+            ) : socket.status === "closed" ? (
+              <Badge variant="neutral">Call ended</Badge>
+            ) : workflowStage ? (
+
               <Badge variant="primary">
                 <Sparkles className="size-3" />
                 {titleCase(workflowStage)}
               </Badge>
             ) : null}
+
           </div>
           <p className="mt-1 text-xs text-slate-400">
             Call {callId.slice(0, 8)} · {formatDuration(elapsed)} ·{" "}
@@ -539,8 +577,9 @@ export function LiveCallPage() {
           >
             {microphone.error ??
               (microphone.status === "active"
-                ? "Microphone audio is streaming"
+                ? "Microphone ON · Streaming 16 kHz PCM16 audio"
                 : "Microphone is off")}
+
           </span>
           <span className="ml-auto text-[11px] text-slate-400">
             Native WebSocket · not Socket.IO

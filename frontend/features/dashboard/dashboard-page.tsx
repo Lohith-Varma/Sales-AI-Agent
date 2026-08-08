@@ -19,12 +19,13 @@ export function DashboardPage() {
   const ready = useQuery({ queryKey: queryKeys.aiReadiness, queryFn: aiApi.readiness, refetchInterval: 30_000 });
   const data = dashboard.data?.data;
   const serviceData = [
-    { name: "Core API", value: core.data?.data.status === "healthy" ? 1 : 0, color: "#22C55E" },
+    { name: "Core API", value: core.data?.data?.status === "healthy" ? 1 : 0, color: "#22C55E" },
     { name: "AI API", value: ai.data?.status === "healthy" ? 1 : 0, color: "#2563EB" },
-    { name: "Knowledge", value: ready.data?.dependencies.chroma?.status === "healthy" ? 1 : 0, color: "#0F172A" },
+    { name: "Knowledge", value: ready.data?.dependencies?.chroma?.status === "healthy" ? 1 : 0, color: "#0F172A" },
   ];
   const healthyCount = serviceData.reduce((sum, service) => sum + service.value, 0);
-  const serviceLoading = core.isLoading || ai.isLoading || ready.isLoading;
+  const serviceLoading = core.isLoading && ai.isLoading && ready.isLoading;
+
   const metrics = data ? [
     ["Today's Calls", String(data.metrics.today_calls), "Calls created today", PhoneCall],
     ["Active Calls", String(data.metrics.active_calls), "Calls currently in progress", Activity],

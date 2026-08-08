@@ -21,6 +21,13 @@ from app.platform_api import router as platform_router, _serialize_customer
 from app.security import authenticate_request, hash_password, issue_access_token, verify_password
 from app.scheduler.worker import scheduler_loop
 
+from ai.config.container import build_container
+from ai.config.settings import get_settings
+from ai.api.websocket import router as websocket_router
+from ai.api.health import router as ai_health_router
+from ai.api.copilot import router as copilot_router
+from ai.api.knowledge import router as knowledge_router
+
 # Initialize logger
 logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL))
 logger = logging.getLogger(__name__)
@@ -29,6 +36,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("=== Sales AI Backend Starting Up ===")
+    app.state.container = build_container(get_settings())
     if settings.APP_ENV == "production":
         if not settings.AUTH_REQUIRED or not settings.JWT_SECRET or not settings.INTERNAL_API_KEY:
             raise RuntimeError("Production requires AUTH_REQUIRED, JWT_SECRET, and INTERNAL_API_KEY")
@@ -72,7 +80,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from ai.utils.exceptions import AppError
+
 _request_windows: dict[str, deque[float]] = defaultdict(deque)
+
+@app.exception_handler(AppError)
+async def app_error_handler(request: Request, exc: AppError):
+    return JSONResponse(
+        status_code=getattr(exc, "status_code", 400),
+        content={"code": getattr(exc.code, "value", str(exc.code)), "message": exc.public_message, "retryable": exc.retryable},
+    )
+
 
 
 @app.middleware("http")
@@ -87,7 +105,26 @@ async def security_middleware(request: Request, call_next):
     if len(window) >= settings.RATE_LIMIT_REQUESTS_PER_MINUTE:
         return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
     window.append(now)
-    public = request.url.path in {"/", "/api/health", "/api/auth/login", "/docs", "/redoc", "/openapi.json"}
+    public = (
+        request.url.path in {
+            "/",
+            "/api/health",
+            "/api/ai/health",
+            "/api/ai/ready",
+            "/health",
+            "/ready",
+            "/ws/copilot",
+            "/api/auth/login",
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+        }
+        or request.url.path.startswith("/api/v1/copilot")
+        or request.url.path.startswith("/api/ai/api/v1/copilot")
+        or not getattr(settings, "AUTH_REQUIRED", False)
+    )
+
+
     internal = request.url.path.startswith("/api/internal/") or (
         request.url.path == "/api/knowledge-documents" and request.method == "POST"
     )
@@ -460,3 +497,27 @@ def get_clauses(db: Session = Depends(get_db)):
 # Mount the API routers
 app.include_router(api_router)
 app.include_router(platform_router)
+app.include_router(websocket_router)
+app.include_router(ai_health_router, prefix="/api/ai")
+app.include_router(ai_health_router)
+app.include_router(copilot_router, prefix="/api/v1")
+app.include_router(copilot_router, prefix="/api/ai/api/v1")
+app.include_router(copilot_router, prefix="/api")
+app.include_router(knowledge_router, prefix="/api/v1")
+app.include_router(knowledge_router, prefix="/api/ai/api/v1")
+app.include_router(knowledge_router, prefix="/api")
+
+
+@app.post("/api/v1/copilot/complete")
+@app.post("/api/ai/api/v1/copilot/complete")
+@app.post("/api/copilot/complete")
+async def explicit_copilot_complete(request: Request):
+    from ai.api.copilot import _execute_complete_call
+    payload = await request.json()
+    session_id = payload.get("session_id", "")
+    ended_at = payload.get("ended_at")
+    return await _execute_complete_call(str(session_id), ended_at, app.state.container)
+
+
+
+

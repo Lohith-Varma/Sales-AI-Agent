@@ -405,7 +405,9 @@ export type AIServerEvent =
   | { type: "crm_summary"; session_id: string; crm_summary: CRMSummary; requires_human_review: boolean }
   | { type: "status"; session_id: string; stage: WorkflowStage; message: string }
   | { type: "error"; code: string; message: string; request_id: string | null; retryable: boolean }
-  | { type: "pong"; nonce: string };
+  | { type: "pong"; nonce: string }
+  | { type: "audio_stream"; session_id: string; audio_base64: string; format: string; sequence_number: number };
+
 
 export type AIClientControlMessage =
   | { type: "session_start"; sales_agent_id: string; external_lead_id?: string; language?: string; audio_config?: AudioConfiguration; access_token?: string }

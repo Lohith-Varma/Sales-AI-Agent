@@ -32,6 +32,7 @@ from ai.services.conversation_store import InMemoryConversationStore
 from ai.services.document_service import DocumentService
 from ai.services.session_manager import SessionManager
 from ai.services.core_persistence import CorePersistenceClient
+from ai.services.elevenlabs_service import ElevenLabsService
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,7 @@ class ApplicationContainer:
     conversation_store: InMemoryConversationStore
     vector_store: ChromaVectorStore
     core_persistence: CorePersistenceClient
+    elevenlabs_service: ElevenLabsService
 
 
 def build_container(settings: Settings) -> ApplicationContainer:
@@ -153,6 +155,11 @@ def build_container(settings: Settings) -> ApplicationContainer:
         timeout_seconds=settings.core_persistence_timeout_seconds,
         max_retries=settings.core_persistence_max_retries,
     )
+    elevenlabs_service = ElevenLabsService(
+        api_key=settings.elevenlabs_api_key,
+        default_voice_id=settings.elevenlabs_voice_id,
+        default_model_id=settings.elevenlabs_model_id,
+    )
     return ApplicationContainer(
         settings=settings,
         workflow=workflow,
@@ -161,6 +168,7 @@ def build_container(settings: Settings) -> ApplicationContainer:
         conversation_store=conversation_store,
         vector_store=vector_store,
         core_persistence=core_persistence,
+        elevenlabs_service=elevenlabs_service,
     )
 
 

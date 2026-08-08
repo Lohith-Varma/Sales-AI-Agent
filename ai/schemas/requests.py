@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Literal, TypeAlias
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field
+from pydantic import Field
 
 from ai.schemas.common import SchemaModel
 from ai.schemas.rag import MetadataScalar
@@ -37,8 +38,9 @@ class AnalyzeTextRequest(SchemaModel):
 class CompleteCallRequest(SchemaModel):
     """Request to finalize a call and produce its CRM summary."""
 
-    session_id: UUID
-    ended_at: AwareDatetime | None = None
+    session_id: UUID | str
+    ended_at: datetime | None = None
+
 
 
 class IngestDocumentsRequest(SchemaModel):
@@ -77,30 +79,35 @@ class UtteranceEndMessage(SchemaModel):
 
 
 class CallEndMessage(SchemaModel):
-    """Signal that the call has ended and CRM generation should run."""
+    """Signal that the call is ending and a final summary is required."""
 
     type: Literal["call_end"] = "call_end"
-    ended_at: AwareDatetime | None = None
 
 
-class PingMessage(SchemaModel):
-    """WebSocket heartbeat sent by the client."""
+class ClientPingMessage(SchemaModel):
+    """Heartbeat frame sent by the client to keep WebSocket connections open."""
 
     type: Literal["ping"] = "ping"
-    nonce: Annotated[str, Field(min_length=1, max_length=100)]
+    nonce: Annotated[str, Field(min_length=1, max_length=100)] | None = None
 
 
-ClientControlMessage: TypeAlias = Annotated[
-    SessionStartMessage | AudioConfigMessage | UtteranceEndMessage | CallEndMessage | PingMessage,
-    Field(discriminator="type"),
-]
-
+ClientMessage: TypeAlias = (
+    SessionStartMessage
+    | AudioConfigMessage
+    | UtteranceEndMessage
+    | CallEndMessage
+    | ClientPingMessage
+)
+ClientControlMessage: TypeAlias = ClientMessage
+PingMessage: TypeAlias = ClientPingMessage
 
 __all__ = [
     "AnalyzeTextRequest",
     "AudioConfigMessage",
     "CallEndMessage",
     "ClientControlMessage",
+    "ClientMessage",
+    "ClientPingMessage",
     "CompleteCallRequest",
     "CreateSessionRequest",
     "ExternalReference",
@@ -109,3 +116,5 @@ __all__ = [
     "SessionStartMessage",
     "UtteranceEndMessage",
 ]
+
+

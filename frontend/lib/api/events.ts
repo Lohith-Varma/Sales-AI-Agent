@@ -1,6 +1,7 @@
 import type { AIServerEvent } from "@/lib/api/contracts";
 
-const eventTypes = new Set(["session_ready", "transcript", "copilot_result", "crm_summary", "status", "error", "pong"]);
+const eventTypes = new Set(["session_ready", "transcript", "copilot_result", "crm_summary", "status", "error", "pong", "audio_stream"]);
+
 
 export function parseAIServerEvent(raw: string): AIServerEvent {
   const parsed: unknown = JSON.parse(raw);

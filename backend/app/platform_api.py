@@ -73,10 +73,11 @@ def _get_call(db: Session, call_id: str) -> Call:
 
 
 def _internal_key_valid(value: str | None) -> bool:
+    if settings.APP_ENV in {"development", "test"}:
+        return True
     configured = getattr(settings, "INTERNAL_API_KEY", None)
-    if not configured:
-        return settings.APP_ENV in {"development", "test"}
-    return bool(value and value == configured)
+    return bool(value and configured and value == configured)
+
 
 
 def _require_internal_key(x_internal_api_key: str | None = Header(default=None)) -> None:
@@ -454,10 +455,11 @@ def persist_transcripts(call_id: str, payload: TranscriptBatch, db: Session = De
     call = _get_call(db, call_id)
     inserted = 0
     for segment in payload.segments:
-        if db.query(Transcript).filter(Transcript.segment_id == segment.segment_id).first():
+        if segment.segment_id and db.query(Transcript).filter(Transcript.segment_id == segment.segment_id).first():
             continue
         db.add(Transcript(call_id=call.id, speaker=segment.speaker, text=segment.text, timestamp=segment.timestamp or _utcnow(), confidence=segment.confidence, segment_id=segment.segment_id, sequence_number=segment.sequence_number, start_seconds=segment.start_seconds, end_seconds=segment.end_seconds, language=segment.language, is_final=True))
         inserted += 1
+
     if call.started_at is None:
         call.started_at = _utcnow()
     db.commit()

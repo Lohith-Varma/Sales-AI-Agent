@@ -107,8 +107,14 @@ def configure_logging(settings: Settings) -> None:
         ],
     )
 
-    handler = logging.StreamHandler(sys.stderr)
+    import io
+    if hasattr(sys.stderr, "buffer"):
+        stream = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    else:
+        stream = sys.stderr
+    handler = logging.StreamHandler(stream)
     handler.setFormatter(formatter)
+
 
     root_logger = logging.getLogger()
     root_logger.handlers.clear()

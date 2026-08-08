@@ -43,6 +43,34 @@ class CorePersistenceClient:
     async def _post(self, call_id: str | None, path: str, payload: dict[str, Any]) -> bool:
         if not self._base_url or not call_id:
             return True
+        try:
+            from app.db.database import SessionLocal
+            from app.platform_api import (
+                persist_transcripts,
+                persist_copilot_result,
+                persist_crm_summary,
+                link_ai_session,
+                TranscriptBatch,
+                CopilotResultInput,
+                CRMSummaryInput,
+                SessionLink,
+            )
+            with SessionLocal() as db:
+                clean_path = path.strip("/")
+                if clean_path == "session":
+                    link_ai_session(call_id, SessionLink(ai_session_id=payload.get("ai_session_id", "")), db)
+                elif clean_path == "transcripts":
+                    persist_transcripts(call_id, TranscriptBatch(**payload), db)
+                elif clean_path == "copilot-results":
+                    persist_copilot_result(call_id, CopilotResultInput(**payload), db)
+                elif clean_path == "crm-summary":
+                    persist_crm_summary(call_id, CRMSummaryInput(**payload), db)
+            return True
+        except ImportError:
+            pass
+        except Exception as exc:
+            self._logger.debug("inprocess_persistence_fallback", error=str(exc))
+
         url = f"{self._base_url}/api/internal/calls/{call_id}/{path.lstrip('/')}"
         last_error: str | None = None
         for attempt in range(self._max_retries + 1):
@@ -61,6 +89,7 @@ class CorePersistenceClient:
             error_type=last_error,
         )
         return False
+
 
     async def link_session(self, call_id: str | None, session_id: str) -> bool:
         return await self._post(call_id, "session", {"ai_session_id": session_id})

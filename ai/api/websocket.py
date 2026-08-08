@@ -28,6 +28,7 @@ from ai.schemas.requests import (
     UtteranceEndMessage,
 )
 from ai.schemas.responses_api import (
+    AudioStreamEvent,
     CopilotResultEvent,
     CRMSummaryEvent,
     ErrorEvent,
@@ -72,6 +73,18 @@ async def _process_audio(
             message="Transcribing and analyzing the latest audio window.",
         ),
     )
+    _logger.info("stt_started", session_id=session_id)
+
+    # Check if ElevenLabs STT can transcribe directly
+    elevenlabs_stt = ""
+    if container.elevenlabs_service.is_configured():
+        try:
+            elevenlabs_stt = await container.elevenlabs_service.transcribe_audio(
+                audio, language=session.language or "en"
+            )
+        except Exception:
+            pass
+
     context = tuple(
         segment.text
         for segment in session.transcript[-container.settings.transcript_context_turns :]
@@ -94,14 +107,24 @@ async def _process_audio(
             known_entities=session.entities,
         )
     )
+
+    if elevenlabs_stt and not result.latest_transcript.strip():
+        result.latest_transcript = elevenlabs_stt
+
     if not result.latest_transcript.strip():
         return None
+
+    _logger.info("transcript_received", session_id=session_id, transcript=result.latest_transcript)
+    _logger.info("llm_response_generated", session_id=session_id, response=result.suggestion.text)
+
     segment = TranscriptSegment(
+        speaker=SpeakerRole.CUSTOMER,
         text=result.latest_transcript,
         start_seconds=0,
         end_seconds=max(duration, 0.001),
         language=session.language or "unknown",
     )
+
     await container.conversation_store.append_transcript(session_id, (segment,))
     session.entities = result.entities
     session.last_result = result
@@ -121,6 +144,27 @@ async def _process_audio(
         ),
     )
     await _send_event(websocket, CopilotResultEvent(result=result))
+
+    # Generate ElevenLabs TTS spoken response if configured
+    if result.suggestion and result.suggestion.text and container.elevenlabs_service.is_configured():
+        try:
+            _logger.info("elevenlabs_tts_started", session_id=session_id)
+            audio_b64 = await container.elevenlabs_service.generate_speech_base64(
+                result.suggestion.text
+            )
+            if audio_b64:
+                _logger.info("audio_streaming_started", session_id=session_id)
+                await _send_event(
+                    websocket,
+                    AudioStreamEvent(
+                        session_id=session_id,
+                        audio_base64=audio_b64,
+                        sequence_number=sequence_number,
+                    ),
+                )
+        except Exception as exc:
+            _logger.error("elevenlabs_tts_failed", session_id=session_id, error=str(exc))
+
     await _send_event(
         websocket,
         StatusEvent(
@@ -174,6 +218,8 @@ async def copilot_websocket(websocket: WebSocket) -> None:
             )
         )
         session_id = live.session_id
+        _logger.info("voice_session_started", session_id=session_id)
+
         linked = await container.core_persistence.link_session(
             first.external_lead_id, str(session_id)
         )
@@ -185,6 +231,7 @@ async def copilot_websocket(websocket: WebSocket) -> None:
                 audio_config=live.audio_buffer.configuration,
             ),
         )
+
         if not linked:
             await _send_event(
                 websocket,
@@ -311,10 +358,12 @@ async def copilot_websocket(websocket: WebSocket) -> None:
         )
     finally:
         if session_id is not None:
+            _logger.info("voice_session_ended", session_id=session_id)
             with suppress(AppError):
                 await container.session_manager.close(session_id)
-        with suppress(RuntimeError):
+        with suppress(Exception):
             await websocket.close()
+
 
 
 __all__ = ["router"]

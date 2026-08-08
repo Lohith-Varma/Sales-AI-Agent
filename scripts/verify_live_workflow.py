@@ -12,9 +12,10 @@ import httpx
 import websockets
 
 
-CORE = os.getenv("QA_CORE_URL", "http://127.0.0.1:8001")
+CORE = os.getenv("QA_CORE_URL", "http://127.0.0.1:8000")
 AI = os.getenv("QA_AI_URL", "http://127.0.0.1:8000")
 WS = os.getenv("QA_AI_WS_URL", "ws://127.0.0.1:8000/ws/copilot")
+
 TOKEN = os.getenv("QA_ACCESS_TOKEN")
 
 

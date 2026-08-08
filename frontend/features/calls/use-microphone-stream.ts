@@ -56,12 +56,24 @@ export function useMicrophoneStream() {
       nodeRef.current = node;
       setStatus("active");
     } catch (caught) {
-      const message = caught instanceof DOMException && caught.name === "NotAllowedError" ? "Microphone permission was denied." : caught instanceof Error ? caught.message : "The microphone could not be started.";
+      let message = "The microphone could not be started.";
+      if (caught instanceof DOMException) {
+        if (caught.name === "NotAllowedError" || caught.name === "PermissionDeniedError") {
+          message = "Microphone permission denied. Please allow microphone access in your browser settings.";
+        } else if (caught.name === "NotFoundError" || caught.name === "DevicesNotFoundError") {
+          message = "No microphone device detected.";
+        } else {
+          message = caught.message;
+        }
+      } else if (caught instanceof Error) {
+        message = caught.message;
+      }
       setError(message);
       setStatus("error");
       await stop();
       setStatus("error");
     }
+
   }, [stop]);
 
   return { status, error, start, stop };

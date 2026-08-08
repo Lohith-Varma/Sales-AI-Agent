@@ -10,3 +10,5 @@ openai-whisper>=20250625
 pypdf>=6.15.0
 sentence-transformers>=5.7.0
 structlog>=26.1.0
+elevenlabs>=1.50.0
+

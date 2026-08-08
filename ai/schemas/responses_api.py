@@ -117,6 +117,16 @@ class PongEvent(SchemaModel):
     nonce: Annotated[str, Field(min_length=1, max_length=100)]
 
 
+class AudioStreamEvent(SchemaModel):
+    """Audio payload containing ElevenLabs TTS response for browser playback."""
+
+    type: Literal["audio_stream"] = "audio_stream"
+    session_id: UUID
+    audio_base64: str
+    format: str = "audio/mpeg"
+    sequence_number: Annotated[int, Field(ge=0)] = 0
+
+
 ServerEvent: TypeAlias = Annotated[
     SessionReadyEvent
     | TranscriptEvent
@@ -124,12 +134,14 @@ ServerEvent: TypeAlias = Annotated[
     | CRMSummaryEvent
     | StatusEvent
     | ErrorEvent
-    | PongEvent,
+    | PongEvent
+    | AudioStreamEvent,
     Field(discriminator="type"),
 ]
 
 
 __all__ = [
+    "AudioStreamEvent",
     "CRMSummaryEvent",
     "CopilotResultEvent",
     "DependencyHealth",
@@ -144,3 +156,4 @@ __all__ = [
     "StatusEvent",
     "TranscriptEvent",
 ]
+
