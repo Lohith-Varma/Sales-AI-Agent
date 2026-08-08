@@ -74,6 +74,14 @@ class Settings(BaseSettings):
         "http://localhost:5173",
     )
     max_concurrent_sessions: PositiveInteger = 25
+    auth_required: bool = False
+    jwt_secret: SecretStr | None = None
+
+    # Core CRM integration. Set CORE_API_URL empty for isolated AI-only runs.
+    core_api_url: str | None = "http://127.0.0.1:8000"
+    internal_api_key: SecretStr | None = None
+    core_persistence_timeout_seconds: PositiveSeconds = 2.0
+    core_persistence_max_retries: Annotated[int, Field(ge=0, le=5)] = 2
 
     # Logging and observability
     log_level: str = "INFO"
@@ -83,7 +91,7 @@ class Settings(BaseSettings):
 
     # Gemini
     gemini_api_key: SecretStr
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.1-flash-lite"
     gemini_request_timeout_seconds: PositiveSeconds = 20
     gemini_max_retries: Annotated[int, Field(ge=0, le=5)] = 2
     gemini_analysis_temperature: Probability = 0.0
@@ -118,7 +126,7 @@ class Settings(BaseSettings):
     document_chunk_overlap: Annotated[int, Field(ge=0, le=2_000)] = 150
     rag_top_k: Annotated[int, Field(ge=1, le=50)] = 5
     rag_fetch_k: Annotated[int, Field(ge=1, le=200)] = 15
-    rag_min_relevance_score: Probability = 0.60
+    rag_min_relevance_score: Probability = 0.48
     rag_max_context_characters: Annotated[int, Field(ge=500, le=100_000)] = 12_000
 
     # Conversation lifecycle
@@ -228,6 +236,14 @@ class Settings(BaseSettings):
             return normalized or None
         return value
 
+    @field_validator("core_api_url", mode="before")
+    @classmethod
+    def normalize_optional_core_url(cls, value: object) -> object:
+        if isinstance(value, str):
+            normalized = value.strip().rstrip("/")
+            return normalized or None
+        return value
+
     @model_validator(mode="after")
     def validate_related_limits(self) -> Self:
         """Validate invariants involving multiple configuration fields."""
@@ -246,6 +262,12 @@ class Settings(BaseSettings):
             raise ValueError("APP_DEBUG must be false in production")
         if self.app_env is AppEnvironment.PRODUCTION and "*" in self.allowed_origins:
             raise ValueError("wildcard CORS origins are not allowed in production")
+        if self.app_env is AppEnvironment.PRODUCTION and (
+            not self.auth_required or self.jwt_secret is None or self.internal_api_key is None
+        ):
+            raise ValueError(
+                "production requires AUTH_REQUIRED, JWT_SECRET, and INTERNAL_API_KEY"
+            )
         return self
 
     @property

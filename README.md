@@ -90,8 +90,8 @@ flowchart LR
 9. The graph assembles the validated outputs and sends a structured JSON event to
    the sales console.
 10. When the call ends, the CRM agent summarizes the complete transcript and
-    generates typed CRM fields for review before a future CRM integration writes
-    them.
+    generates typed CRM fields, persists the summary and lead state, and creates
+    a linked follow-up and task when the next action requires one.
 
 ## Agents
 
@@ -283,13 +283,13 @@ variables. The eventual `.env.example` will document the complete set, including
 APP_ENV=development
 LOG_LEVEL=INFO
 GEMINI_API_KEY=replace-me
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.1-flash-lite
 WHISPER_MODEL=base
 EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 CHROMA_PERSIST_DIRECTORY=./data/chroma
 CHROMA_COLLECTION=pay_in_3_knowledge
 RAG_TOP_K=5
-RAG_MIN_RELEVANCE_SCORE=0.60
+RAG_MIN_RELEVANCE_SCORE=0.48
 ```
 
 Secrets must not be committed or written to logs. Production deployments should

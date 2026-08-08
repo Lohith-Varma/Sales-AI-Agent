@@ -65,7 +65,11 @@ class GeminiStructuredLLM:
                             system_instruction=system_prompt,
                             temperature=temperature,
                             response_mime_type="application/json",
-                            response_schema=output_type,
+                            # Passing the raw JSON Schema avoids the Google SDK's
+                            # narrower intermediate Schema model rejecting valid
+                            # Pydantic keywords such as exclusiveMinimum. The
+                            # response is still fully validated below.
+                            response_json_schema=output_type.model_json_schema(),
                         ),
                     )
                 if not response.text:

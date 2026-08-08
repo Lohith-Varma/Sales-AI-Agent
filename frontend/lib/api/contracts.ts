@@ -13,18 +13,135 @@ export interface StandardResponse<T> {
 export interface CoreHealth {
   status: string;
   env: string;
+  auth_required: boolean;
+  database: string;
   timestamp: string;
+}
+
+export interface AuthenticatedUser {
+  id: string;
+  email: string;
+  display_name: string;
+  role: "agent" | "manager" | "admin" | string;
 }
 
 export interface CoreCustomer {
   id: string;
+  photo: string | null;
   name: string;
   email: string | null;
   phone: string;
-  city: string;
+  occupation: string | null;
+  city: string | null;
+  location: string | null;
+  leadScore: number;
+  stage: string;
+  kycStatus: string;
+  tags: string[];
+  currentIntent: string | null;
+  currentSentiment: string | null;
+  riskLevel: string;
+  buyingSignals: string[];
+  objections: string[];
   sensitiveDataOnFile: boolean;
-  kycFields: Array<{ label: string; value: string }>;
+  kycFields: Array<{ id: string; label: string; value: string | null; status: string }>;
   interactions: Array<{ date: string; outcome: string; note: string }>;
+  previousCalls: Array<{ id: string; date: string | null; status: string; outcome: string | null; summary: string | null; durationSeconds: number; intent: string | null; sentiment: string | null }>;
+  previousPurchases: Array<{ id: string; product: string; amount: number; currency: string; status: string; purchasedAt: string }>;
+  pastOffers: Array<{ id: string; name: string; status: string; presentedAt: string; acceptedAt: string | null }>;
+  followUps: CoreFollowUp[];
+  conversationHistory: Array<{ id: string; body: string; source: string; callId: string | null; createdAt: string | null }>;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface PaginatedCustomers { items: CoreCustomer[]; total: number; limit: number; offset: number }
+
+export interface CoreFollowUp {
+  id: string;
+  call_id: string;
+  customer_id: string;
+  customer_name: string | null;
+  title: string;
+  description: string | null;
+  scheduled_at: string;
+  reminder_at: string | null;
+  completed_at: string | null;
+  status: string;
+  channel: string;
+  priority: string;
+  attempts: number;
+}
+
+export interface CoreTask {
+  id: string;
+  customer_id: string | null;
+  customer_name: string | null;
+  call_id: string | null;
+  title: string;
+  description: string | null;
+  status: string;
+  priority: string;
+  due_at: string | null;
+  completed_at: string | null;
+  created_at: string | null;
+}
+
+export interface CoreNotification {
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  related_type: string | null;
+  related_id: string | null;
+  read_at: string | null;
+  created_at: string;
+}
+
+export interface CoreCallSummary {
+  id: string;
+  customer_id: string;
+  customer_name: string | null;
+  status: string;
+  direction: string;
+  started_at: string | null;
+  ended_at: string | null;
+  duration_seconds: number;
+  summary: string | null;
+  outcome: string | null;
+  intent: string | null;
+  sentiment: string | null;
+  compliance_score: number | null;
+  agent_score: number | null;
+  recording_url: string | null;
+  revenue: number;
+}
+
+export interface DashboardData {
+  metrics: {
+    today_calls: number;
+    active_calls: number;
+    conversion_rate: number;
+    average_duration_seconds: number;
+    pending_follow_ups: number;
+    revenue: number;
+    customer_satisfaction: number | null;
+    ai_suggestion_usage_rate: number;
+    ai_suggestions: number;
+  };
+  lead_funnel: Array<{ stage: string; count: number }>;
+  recent_activity: Array<{ call_id: string; customer_id: string; customer_name: string | null; status: string; outcome: string | null; updated_at: string | null }>;
+  upcoming_follow_ups: CoreFollowUp[];
+}
+
+export interface AnalyticsData {
+  period_days: number;
+  call_volume: Array<{ date: string; inbound: number; outbound: number; total: number }>;
+  intent_distribution: Array<{ name: string; value: number }>;
+  sentiment_distribution: Array<{ name: string; value: number }>;
+  call_duration: { average_seconds: number; minimum_seconds: number; maximum_seconds: number };
+  lead_funnel: Array<{ stage: string; value: number }>;
+  agent_performance: Array<{ agent: string; calls: number; conversion_rate: number; average_score: number | null }>;
 }
 
 export interface CoreClause {
@@ -37,11 +154,37 @@ export interface CoreClause {
   stale?: boolean;
 }
 
+export interface KnowledgeDocumentRecord {
+  id: string;
+  title: string;
+  source: string;
+  version: string | null;
+  category: string | null;
+  chunk_count: number;
+  status: string;
+  indexed_at: string;
+}
+
+export interface ProductRecord {
+  id: string;
+  name: string;
+  type: string;
+  terms: string;
+  interest_rate: number | null;
+  tenure_months: number | null;
+  is_active: boolean;
+  updated_at: string | null;
+}
+
 export interface CoreTranscript {
+  id: string;
+  segment_id: string;
   speaker: "customer" | "agent" | "ai" | string;
   text: string;
   timestamp: string;
   confidence: number | null;
+  bookmarked: boolean;
+  sequence: number;
 }
 
 export interface CoreCallCreated {
@@ -265,7 +408,7 @@ export type AIServerEvent =
   | { type: "pong"; nonce: string };
 
 export type AIClientControlMessage =
-  | { type: "session_start"; sales_agent_id: string; external_lead_id?: string; language?: string; audio_config?: AudioConfiguration }
+  | { type: "session_start"; sales_agent_id: string; external_lead_id?: string; language?: string; audio_config?: AudioConfiguration; access_token?: string }
   | { type: "audio_config"; audio_config: AudioConfiguration }
   | { type: "utterance_end"; sequence_number: number }
   | { type: "call_end"; ended_at?: string }

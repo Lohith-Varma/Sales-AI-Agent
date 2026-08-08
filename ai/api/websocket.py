@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import suppress
 from datetime import datetime
 from typing import cast
@@ -32,10 +33,13 @@ from ai.schemas.responses_api import (
     ErrorEvent,
     PongEvent,
     SessionReadyEvent,
+    StatusEvent,
     TranscriptEvent,
 )
 from ai.schemas.speech import AudioChunk, TranscriptionRequest, TranscriptSegment
 from ai.services.audio_buffer import AudioBuffer
+from ai.services.session_recovery import recover_session_context
+from ai.security import verify_access_token
 from ai.utils.exceptions import AppError, InvalidRequestError
 from ai.utils.time import utc_now
 
@@ -60,6 +64,14 @@ async def _process_audio(
     if not audio:
         return None
     session = await container.conversation_store.get(session_id)
+    await _send_event(
+        websocket,
+        StatusEvent(
+            session_id=session_id,
+            stage="transcribing",
+            message="Transcribing and analyzing the latest audio window.",
+        ),
+    )
     context = tuple(
         segment.text
         for segment in session.transcript[-container.settings.transcript_context_turns :]
@@ -90,6 +102,16 @@ async def _process_audio(
     )
     await container.conversation_store.append_transcript(session_id, (segment,))
     session.entities = result.entities
+    session.last_result = result
+    persisted_transcript, persisted_result = await asyncio.gather(
+        container.core_persistence.persist_transcript(
+            session.external_lead_id,
+            [segment.model_dump(mode="json") | {"sequence_number": sequence_number}],
+        ),
+        container.core_persistence.persist_result(
+            session.external_lead_id, result.model_dump(mode="json")
+        ),
+    )
     await _send_event(
         websocket,
         TranscriptEvent(
@@ -97,6 +119,23 @@ async def _process_audio(
         ),
     )
     await _send_event(websocket, CopilotResultEvent(result=result))
+    await _send_event(
+        websocket,
+        StatusEvent(
+            session_id=session_id,
+            stage="completed",
+            message="Grounded copilot guidance is ready.",
+        ),
+    )
+    if not (persisted_transcript and persisted_result):
+        await _send_event(
+            websocket,
+            ErrorEvent(
+                code=ErrorCode.PERSISTENCE_FAILED,
+                message="Live assistance is available, but the CRM write failed and will need retry.",
+                retryable=True,
+            ),
+        )
     return result
 
 
@@ -114,6 +153,16 @@ async def copilot_websocket(websocket: WebSocket) -> None:
         first = _CONTROL_ADAPTER.validate_json(await websocket.receive_text())
         if not isinstance(first, SessionStartMessage):
             raise InvalidRequestError("First WebSocket message must be session_start")
+        if container.settings.auth_required:
+            try:
+                verify_access_token(
+                    first.access_token,
+                    container.settings.jwt_secret.get_secret_value()
+                    if container.settings.jwt_secret
+                    else None,
+                )
+            except (ValueError, TypeError):
+                raise InvalidRequestError("A valid access token is required")
         live = await container.session_manager.create(
             CreateSessionRequest(
                 sales_agent_id=first.sales_agent_id,
@@ -123,6 +172,10 @@ async def copilot_websocket(websocket: WebSocket) -> None:
             )
         )
         session_id = live.session_id
+        linked = await container.core_persistence.link_session(
+            first.external_lead_id, str(session_id)
+        )
+        await recover_session_context(container, session_id, first.external_lead_id)
         await _send_event(
             websocket,
             SessionReadyEvent(
@@ -130,6 +183,15 @@ async def copilot_websocket(websocket: WebSocket) -> None:
                 audio_config=live.audio_buffer.configuration,
             ),
         )
+        if not linked:
+            await _send_event(
+                websocket,
+                ErrorEvent(
+                    code=ErrorCode.PERSISTENCE_FAILED,
+                    message="The AI session started, but it could not be linked to the CRM call.",
+                    retryable=True,
+                ),
+            )
         while True:
             message = await websocket.receive()
             if message.get("type") == "websocket.disconnect":
@@ -182,9 +244,10 @@ async def copilot_websocket(websocket: WebSocket) -> None:
                     await _process_audio(websocket, container, session_id, analysis_sequence)
                     or last_result
                 )
+                session = await container.conversation_store.get(session_id)
+                last_result = last_result or session.last_result
                 if last_result is None:
                     raise InvalidRequestError("Cannot summarize a call without a transcript")
-                session = await container.conversation_store.get(session_id)
                 ended_at: datetime = control.ended_at or utc_now()
                 crm = await container.workflow.run_crm(
                     CRMGenerationRequest(
@@ -208,6 +271,21 @@ async def copilot_websocket(websocket: WebSocket) -> None:
                         requires_human_review=crm.requires_human_review,
                     ),
                 )
+                persisted = await container.core_persistence.persist_crm_summary(
+                    session.external_lead_id,
+                    crm.crm_summary.model_dump(mode="json"),
+                    requires_human_review=crm.requires_human_review,
+                )
+                if not persisted:
+                    await _send_event(
+                        websocket,
+                        ErrorEvent(
+                            code=ErrorCode.PERSISTENCE_FAILED,
+                            message="The call summary was generated but could not be written to CRM.",
+                            retryable=True,
+                        ),
+                    )
+                    continue
                 await container.session_manager.close(session_id, ended_at=ended_at)
                 session_id = None
                 break

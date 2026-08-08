@@ -1,23 +1,25 @@
 import logging
+import asyncio
 import uuid
 import datetime
+import time
+from collections import defaultdict, deque
 from typing import List, Dict, Any, Optional
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, status, APIRouter
+from contextlib import asynccontextmanager, suppress
+from fastapi import FastAPI, Depends, HTTPException, status, APIRouter, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.config import settings
 from app.db.database import get_db, engine
-from app.db.base import Base, Customer, Call, Transcript, ConsentLog, ProductOffer, KYCDoc
-from app.compliance.encryption import decrypt
+from app.db.base import AgentSession, Base, Customer, Call, Transcript, ConsentLog, ProductOffer, KYCDoc, Lead, Note, User
 from app.compliance.audit import log_pii_access
-from app.telephony.connection import parse_twilio_media_frame
-from app.voice_pipeline.pipeline import VoicePipeline
-from app.voice_pipeline.stt_provider import MockSTTProvider
-from app.voice_pipeline.llm_provider import MockLLMProvider
-from app.voice_pipeline.tts_provider import MockTTSProvider
+from app.platform_api import router as platform_router, _serialize_customer
+from app.security import authenticate_request, hash_password, issue_access_token, verify_password
+from app.scheduler.worker import scheduler_loop
 
 # Initialize logger
 logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL))
@@ -27,8 +29,22 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("=== Sales AI Backend Starting Up ===")
-    yield
-    logger.info("=== Sales AI Backend Shutting Down ===")
+    if settings.APP_ENV == "production":
+        if not settings.AUTH_REQUIRED or not settings.JWT_SECRET or not settings.INTERNAL_API_KEY:
+            raise RuntimeError("Production requires AUTH_REQUIRED, JWT_SECRET, and INTERNAL_API_KEY")
+    if settings.USE_SQLITE and not inspect(engine).get_table_names():
+        # SQLite is the zero-configuration local fallback. Ensure a fresh local
+        # database is usable even when Alembic has not been run yet. Existing
+        # databases are migration-owned and must never be mutated by create_all.
+        Base.metadata.create_all(bind=engine)
+    scheduler_task = asyncio.create_task(scheduler_loop())
+    try:
+        yield
+    finally:
+        scheduler_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await scheduler_task
+        logger.info("=== Sales AI Backend Shutting Down ===")
 
 # Initialize FastAPI App with required metadata
 app = FastAPI(
@@ -54,22 +70,97 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+_request_windows: dict[str, deque[float]] = defaultdict(deque)
+
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    now = time.monotonic()
+    key = request.client.host if request.client else "unknown"
+    window = _request_windows[key]
+    while window and now - window[0] >= 60:
+        window.popleft()
+    if len(window) >= settings.RATE_LIMIT_REQUESTS_PER_MINUTE:
+        return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
+    window.append(now)
+    public = request.url.path in {"/", "/api/health", "/api/auth/login", "/docs", "/redoc", "/openapi.json"}
+    internal = request.url.path.startswith("/api/internal/") or (
+        request.url.path == "/api/knowledge-documents" and request.method == "POST"
+    )
+    if request.url.path.startswith("/api/") and not public and not internal:
+        try:
+            request.state.user = authenticate_request(request)
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
+
 # --- Request Models ---
 class WrapUpRequest(BaseModel):
     summary: str
     outcome: str
 
 
-# --- Dependency Injection for Voice Pipeline ---
-def get_voice_pipeline() -> VoicePipeline:
-    stt = MockSTTProvider()
-    llm = MockLLMProvider()
-    tts = MockTTSProvider()
-    return VoicePipeline(stt_provider=stt, llm_provider=llm, tts_provider=tts)
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class UserCreateRequest(BaseModel):
+    email: str
+    display_name: str
+    password: str
+    role: str = "agent"
 
 
 # --- API Routers ---
 api_router = APIRouter(prefix="/api")
+
+
+@api_router.post("/auth/login", tags=["Authentication"])
+def login(payload: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == payload.email.strip().lower()).first()
+    if user is None or not user.is_active or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    return {"access_token": issue_access_token(user), "token_type": "bearer", "expires_in": settings.JWT_ACCESS_MINUTES * 60, "user": {"id": str(user.id), "email": user.email, "display_name": user.display_name, "role": user.role}}
+
+
+@api_router.get("/auth/me", tags=["Authentication"])
+def current_user(request: Request):
+    user = getattr(request.state, "user", None)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Authentication is disabled or no token was supplied")
+    return {"id": str(user.id), "email": user.email, "display_name": user.display_name, "role": user.role}
+
+
+@api_router.get("/users", tags=["Users"])
+def list_users(request: Request, db: Session = Depends(get_db)):
+    user = getattr(request.state, "user", None)
+    if user is None or user.role != "admin":
+        raise HTTPException(status_code=403, detail="Administrator role required")
+    return [{"id": str(item.id), "email": item.email, "display_name": item.display_name, "role": item.role, "is_active": item.is_active, "created_at": item.created_at.isoformat()} for item in db.query(User).order_by(User.created_at.desc()).all()]
+
+
+@api_router.post("/users", status_code=status.HTTP_201_CREATED, tags=["Users"])
+def create_user(payload: UserCreateRequest, request: Request, db: Session = Depends(get_db)):
+    actor = getattr(request.state, "user", None)
+    if actor is None or actor.role != "admin":
+        raise HTTPException(status_code=403, detail="Administrator role required")
+    if payload.role not in {"agent", "manager", "admin"}:
+        raise HTTPException(status_code=422, detail="Invalid role")
+    email = payload.email.strip().lower()
+    if db.query(User).filter(User.email == email).first():
+        raise HTTPException(status_code=409, detail="User already exists")
+    try:
+        password_hash = hash_password(payload.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    user = User(email=email, display_name=payload.display_name.strip(), password_hash=password_hash, role=payload.role)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return {"id": str(user.id), "email": user.email, "display_name": user.display_name, "role": user.role, "is_active": user.is_active}
 
 # --- Root Endpoints ---
 
@@ -93,6 +184,8 @@ def health_check():
         "data": {
             "status": "healthy",
             "env": settings.APP_ENV,
+            "auth_required": settings.AUTH_REQUIRED,
+            "database": engine.dialect.name,
             "timestamp": datetime.datetime.utcnow().isoformat()
         }
     }
@@ -116,15 +209,12 @@ def create_customer(name: str, phone_number: str, email: Optional[str] = None, s
         pii_data_encrypted=pii_data
     )
     db.add(customer)
+    db.flush()
+    # Customer creation opens a real lead. KYC rows are written only by the KYC
+    # workflow; the API must never fabricate verified documents.
+    db.add(Lead(customer_id=customer.id, source="inbound", stage="new", status="open"))
     db.commit()
     db.refresh(customer)
-    
-    # Create seed KYC documents for the customer
-    kyc_pan = KYCDoc(customer_id=customer.id, doc_type="PAN", doc_status="verified", encrypted_doc_data="Verified ••••P7K")
-    kyc_dob = KYCDoc(customer_id=customer.id, doc_type="Date of birth", doc_status="verified", encrypted_doc_data="Verified • 12 Aug 1994")
-    kyc_addr = KYCDoc(customer_id=customer.id, doc_type="Address", doc_status="verified", encrypted_doc_data="Verified • Bengaluru, KA")
-    db.add_all([kyc_pan, kyc_dob, kyc_addr])
-    db.commit()
 
     log_pii_access(
         user_id="system_api",
@@ -148,67 +238,13 @@ def create_customer(name: str, phone_number: str, email: Optional[str] = None, s
 @api_router.get("/customers/{customer_id}", tags=["Customers"])
 def get_customer_details(customer_id: str, db: Session = Depends(get_db)):
     """Retrieves customer record with decrypted sensitive data and past call interactions."""
-    customer = None
     try:
         cust_uuid = uuid.UUID(customer_id)
-        customer = db.query(Customer).filter(Customer.id == cust_uuid).first()
-    except ValueError:
-        # Fallback query for demo names
-        customer = db.query(Customer).filter(Customer.name == "Ananya Rao").first()
-        if not customer:
-            customer = db.query(Customer).first()
-            
-    # If no customer exists, auto-seed the demo customer
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid customer ID") from exc
+    customer = db.query(Customer).filter(Customer.id == cust_uuid).first()
     if not customer:
-        customer = Customer(
-            name="Ananya Rao",
-            phone_number="+91 98999 4182",
-            email="ananya.rao@example.com",
-            pii_data_encrypted="75000.00"
-        )
-        db.add(customer)
-        db.commit()
-        db.refresh(customer)
-        
-        # Create seed KYC docs
-        kyc_pan = KYCDoc(customer_id=customer.id, doc_type="PAN", doc_status="verified", encrypted_doc_data="Verified ••••P7K")
-        kyc_dob = KYCDoc(customer_id=customer.id, doc_type="Date of birth", doc_status="verified", encrypted_doc_data="Verified • 12 Aug 1994")
-        kyc_addr = KYCDoc(customer_id=customer.id, doc_type="Address", doc_status="verified", encrypted_doc_data="Verified • Bengaluru, KA")
-        db.add_all([kyc_pan, kyc_dob, kyc_addr])
-        db.commit()
-        
-    # Get decrypted KYC docs
-    kyc_list = []
-    kyc_records = db.query(KYCDoc).filter(KYCDoc.customer_id == customer.id).all()
-    for k in kyc_records:
-        kyc_list.append({
-            "label": k.doc_type,
-            "value": decrypt(k.encrypted_doc_data) if k.encrypted_doc_data else "Verified"
-        })
-        
-    if not kyc_list:
-        kyc_list = [
-            {"label": "PAN", "value": "Verified ••••P7K"},
-            {"label": "Date of birth", "value": "Verified • 12 Aug 1994"},
-            {"label": "Address", "value": "Verified • Bengaluru, KA"}
-        ]
-        
-    # Get customer call history
-    interactions = []
-    calls = db.query(Call).filter(Call.customer_id == customer.id).order_by(Call.created_at.desc()).all()
-    for c in calls:
-        interactions.append({
-            "date": c.created_at.strftime("%d %b %Y"),
-            "outcome": "Follow-up needed" if c.status != "completed" else "Converted",
-            "note": f"Call session status was completed with status code: {c.status}."
-        })
-        
-    if not interactions:
-        interactions = [
-            {"date": "28 Jul 2026", "outcome": "Follow-up needed", "note": "Asked about payment timing."},
-            {"date": "11 Jun 2026", "outcome": "Dropped", "note": "Preferred full payment at the time."},
-            {"date": "24 Mar 2026", "outcome": "Converted", "note": "Activated merchant offers."}
-        ]
+        raise HTTPException(status_code=404, detail="Customer not found")
 
     log_pii_access(
         user_id="agent_user",
@@ -221,39 +257,41 @@ def get_customer_details(customer_id: str, db: Session = Depends(get_db)):
     return {
         "success": True,
         "message": "Customer retrieved successfully",
-        "data": {
-            "id": str(customer.id),
-            "name": customer.name,
-            "email": customer.email,
-            "phone": customer.phone_number,
-            "city": "Bengaluru",
-            "sensitiveDataOnFile": True,
-            "kycFields": kyc_list,
-            "interactions": interactions
-        }
+        "data": _serialize_customer(customer)
     }
 
 
 @api_router.post("/calls", status_code=status.HTTP_201_CREATED, tags=["Calls"])
-def initiate_call(customer_id: str, direction: str = "inbound", db: Session = Depends(get_db)):
+def initiate_call(customer_id: str, request: Request, direction: str = "inbound", db: Session = Depends(get_db)):
     """Initiates a new call session for a customer."""
-    customer = None
     try:
         cust_uuid = uuid.UUID(customer_id)
-        customer = db.query(Customer).filter(Customer.id == cust_uuid).first()
-    except ValueError:
-        # Fallback to Ananya Rao or first customer
-        customer = db.query(Customer).filter(Customer.name == "Ananya Rao").first()
-        if not customer:
-            customer = db.query(Customer).first()
-            
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid customer ID") from exc
+    customer = db.query(Customer).filter(Customer.id == cust_uuid).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
+    if direction not in {"inbound", "outbound"}:
+        raise HTTPException(status_code=422, detail="Direction must be inbound or outbound")
         
+    agent_session = None
+    authenticated_user = getattr(request.state, "user", None)
+    if authenticated_user is not None:
+        agent_name = f"{authenticated_user.display_name} ({authenticated_user.email})"
+        agent_session = db.query(AgentSession).filter(AgentSession.agent_name == agent_name).first()
+        if agent_session is None:
+            agent_session = AgentSession(agent_name=agent_name, status="active")
+            db.add(agent_session)
+            db.flush()
+        else:
+            agent_session.status = "active"
+
     call = Call(
         customer_id=customer.id,
+        agent_session_id=agent_session.id if agent_session else None,
         status="initiated",
-        direction=direction
+        direction=direction,
+        started_at=datetime.datetime.utcnow(),
     )
     db.add(call)
     db.commit()
@@ -283,7 +321,7 @@ def log_consent(call_id: str, consent_given: bool, ip_address: Optional[str] = N
         customer_id=call.customer_id,
         consent_given=consent_given,
         ip_address=ip_address,
-        recorded_announcement_sid="REC-ANN-001"  # Mock Twilio announcement ID
+        recorded_announcement_sid=None
     )
     db.add(consent_log)
     
@@ -333,14 +371,18 @@ def get_call_transcripts(call_id: str, db: Session = Depends(get_db)):
     
     transcripts = db.query(Transcript).filter(Transcript.call_id == call_uuid).order_by(Transcript.timestamp.asc()).all()
     
-    # Decrypt transcript texts for user viewing
+    # EncryptedString transparently decrypts values when SQLAlchemy loads them.
     output = []
     for t in transcripts:
         output.append({
+            "id": str(t.id),
+            "segment_id": t.segment_id,
             "speaker": t.speaker,
-            "text": decrypt(t.text),
+            "text": t.text,
             "timestamp": t.timestamp.isoformat(),
-            "confidence": t.confidence
+            "confidence": t.confidence,
+            "bookmarked": t.bookmarked,
+            "sequence": t.sequence_number,
         })
         
     return {
@@ -362,6 +404,13 @@ def complete_wrap_up(call_id: str, payload: WrapUpRequest, db: Session = Depends
         raise HTTPException(status_code=404, detail="Call not found")
         
     call.status = "completed"
+    call.summary = payload.summary
+    call.outcome = payload.outcome
+    call.ended_at = datetime.datetime.utcnow()
+    started = call.started_at or call.created_at
+    if started:
+        call.duration_seconds = max(0, int((call.ended_at - started).total_seconds()))
+    db.add(Note(customer_id=call.customer_id, call_id=call.id, body=payload.summary, source="agent_wrap_up"))
     db.commit()
     
     log_pii_access(
@@ -369,7 +418,7 @@ def complete_wrap_up(call_id: str, payload: WrapUpRequest, db: Session = Depends
         action="WRITE_WRAPUP",
         resource=f"call:{call_id}",
         status="SUCCESS",
-        details=f"Outcome: {payload.outcome} | Summary: {payload.summary[:50]}..."
+        details=f"Outcome: {payload.outcome}; summary stored encrypted."
     )
     
     return {
@@ -387,19 +436,6 @@ def complete_wrap_up(call_id: str, payload: WrapUpRequest, db: Session = Depends
 def get_clauses(db: Session = Depends(get_db)):
     """Retrieves product zero-cost Pay-in-3 eligibility and collections guidelines (RAG source clauses)."""
     offers = db.query(ProductOffer).all()
-    if not offers:
-        # Seed product offers
-        seed_offers = [
-            ProductOffer(name="Pay-in-3, zero-cost EMI terms", type="terms", terms="Eligible purchases are split into three scheduled instalments. No interest is charged when each instalment is paid on time. Availability depends on merchant and approval checks.", interest_rate=0.0, tenure_months=3),
-            ProductOffer(name="Late payment policy", type="late-fees", terms="A late fee may apply when a scheduled instalment is overdue. Quote only the current fee displayed in the approved policy; do not promise a waiver.", interest_rate=0.0, tenure_months=3, is_active=True),
-            ProductOffer(name="KYC verification steps", type="kyc", terms="Check existing CRM KYC fields first. Do not re-request a PAN, date of birth, or address already marked verified. Escalate mismatches through the approved workflow."),
-            ProductOffer(name="Eligibility criteria", type="eligibility", terms="Eligibility is subject to identity verification, merchant availability, account history, and automated affordability checks. Never guarantee approval before the check completes."),
-            ProductOffer(name="Required customer disclosure", type="disclosure", terms="Before closing, disclose the number of instalments, zero-cost condition, due-date obligation, and that late payments can carry a fee.")
-        ]
-        db.add_all(seed_offers)
-        db.commit()
-        offers = db.query(ProductOffer).all()
-        
     clauses_list = []
     for o in offers:
         clauses_list.append({
@@ -407,9 +443,9 @@ def get_clauses(db: Session = Depends(get_db)):
             "title": o.name,
             "topic": o.type,
             "body": o.terms,
-            "source": "Sales compliance script v5.3" if o.type == "disclosure" else f"Product Policy v{o.tenure_months}.0",
-            "lastSynced": o.updated_at.strftime("%d %b %Y, %H:%M IST") if o.updated_at else "07 Aug 2026, 10:00 IST",
-            "stale": o.type == "late-fees"
+            "source": f"Database product offer {o.id}",
+            "lastSynced": (o.updated_at or o.created_at).isoformat(),
+            "stale": not o.is_active
         })
         
     return {
@@ -421,103 +457,4 @@ def get_clauses(db: Session = Depends(get_db)):
 
 # Mount the API router with /api prefix
 app.include_router(api_router)
-
-
-# --- WebSocket Streaming Endpoint directly on app (without prefix) ---
-
-@app.websocket("/ws/calls/{call_id}")
-async def call_websocket_endpoint(
-    websocket: WebSocket,
-    call_id: str,
-    db: Session = Depends(get_db),
-    pipeline: VoicePipeline = Depends(get_voice_pipeline)
-):
-    """
-    WebSocket endpoint representing active telephony media stream channel.
-    Accepts raw audio bytes or Twilio JSON frames, streams to STT -> LLM -> TTS,
-    and returns structured feedback to client.
-    """
-    await websocket.accept()
-    logger.info(f"WebSocket connection accepted for call {call_id}")
-    
-    # Verify call exists
-    try:
-        call_uuid = uuid.UUID(call_id)
-    except ValueError:
-        await websocket.send_json({"error": "Invalid call ID format"})
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-        
-    call = db.query(Call).filter(Call.id == call_uuid).first()
-    if not call:
-        await websocket.send_json({"error": "Call session not found"})
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-
-    # Check DPDP Consent Log first
-    consent = db.query(ConsentLog).filter(
-        ConsentLog.call_id == call_uuid,
-        ConsentLog.consent_given == True
-    ).first()
-    
-    if not consent:
-        logger.error(f"DPDP Block: Call {call_id} websocket stream refused. No customer consent logged.")
-        await websocket.send_json({"error": "DPDP Consent Policy Violation: No customer consent logged for call recording."})
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-
-    # Helper generator to feed websocket stream chunks into the voice pipeline
-    async def websocket_stream_generator():
-        try:
-            while True:
-                message = await websocket.receive()
-                
-                # Support raw audio bytes
-                if "bytes" in message:
-                    yield message["bytes"]
-                # Support Twilio JSON text messages
-                elif "text" in message:
-                    parsed_bytes = parse_twilio_media_frame(message["text"])
-                    if parsed_bytes:
-                        yield parsed_bytes
-        except WebSocketDisconnect:
-            logger.info(f"WebSocket disconnected by client for call {call_id}")
-        except Exception as e:
-            logger.error(f"Error in websocket stream receiver: {e}")
-
-    try:
-        # Run pipeline in background loop and send events back to the client
-        audio_stream = websocket_stream_generator()
-        pipeline_generator = pipeline.run_pipeline(call_uuid, audio_stream, db)
-        
-        async for event in pipeline_generator:
-            event_type = event["type"]
-            
-            if event_type == "transcript":
-                await websocket.send_json({
-                    "event": "transcript",
-                    "speaker": "customer",
-                    "text": event["text"],
-                    "confidence": event["confidence"]
-                })
-            elif event_type == "response":
-                await websocket.send_json({
-                    "event": "response",
-                    "speaker": "ai",
-                    "text": event["text"],
-                    "citations": event["citations"],
-                    "escalate": event["escalate"]
-                })
-            elif event_type == "audio":
-                # Send the synthesized TTS audio bytes as binary message
-                # Prefixing or structuring can be done, here we send the raw binary audio file (WAV)
-                await websocket.send_bytes(event["audio"])
-                
-    except Exception as e:
-        logger.error(f"Error in voice pipeline execution: {e}")
-        await websocket.send_json({"error": f"Pipeline failure: {str(e)}"})
-    finally:
-        # Finalize call session status
-        call.status = "completed"
-        db.commit()
-        logger.info(f"WebSocket connection closed for call {call_id}")
+app.include_router(platform_router)

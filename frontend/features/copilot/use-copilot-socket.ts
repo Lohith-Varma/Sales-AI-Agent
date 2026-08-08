@@ -19,6 +19,8 @@ export function useCopilotSocket({ onEvent, onSessionReset }: SocketCallbacks) {
   const manualClose = useRef(false);
   const retryCount = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const heartbeatTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastPongAt = useRef(0);
   const startMessage = useRef<AIClientControlMessage | null>(null);
   const callbacks = useRef({ onEvent, onSessionReset });
   callbacks.current = { onEvent, onSessionReset };
@@ -42,9 +44,17 @@ export function useCopilotSocket({ onEvent, onSessionReset }: SocketCallbacks) {
           retryCount.current = 0;
           setSessionId(event.session_id);
           setStatus("connected");
+          lastPongAt.current = Date.now();
+          if (heartbeatTimer.current) clearInterval(heartbeatTimer.current);
+          heartbeatTimer.current = setInterval(() => {
+            const active = socketRef.current;
+            if (!active || active.readyState !== WebSocket.OPEN) return;
+            if (Date.now() - lastPongAt.current > 35_000) { active.close(4000, "Heartbeat timed out"); return; }
+            active.send(JSON.stringify({ type: "ping", nonce: String(Date.now()) }));
+          }, 15_000);
         } else if (event.type === "error") {
           setError(event.message);
-        }
+        } else if (event.type === "pong") lastPongAt.current = Date.now();
         callbacks.current.onEvent(event);
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "A realtime event could not be read.");
@@ -52,6 +62,7 @@ export function useCopilotSocket({ onEvent, onSessionReset }: SocketCallbacks) {
     };
     socket.onerror = () => { setError("The AI realtime service could not be reached."); setStatus("error"); };
     socket.onclose = () => {
+      if (heartbeatTimer.current) { clearInterval(heartbeatTimer.current); heartbeatTimer.current = null; }
       socketRef.current = null;
       setSessionId(null);
       if (manualClose.current) { setStatus("closed"); return; }
@@ -62,10 +73,10 @@ export function useCopilotSocket({ onEvent, onSessionReset }: SocketCallbacks) {
     };
   }, []);
 
-  const connect = useCallback((input: { salesAgentId: string; leadId?: string }) => {
+  const connect = useCallback((input: { salesAgentId: string; leadId?: string; accessToken?: string }) => {
     manualClose.current = false;
     retryCount.current = 0;
-    startMessage.current = { type: "session_start", sales_agent_id: input.salesAgentId, external_lead_id: input.leadId, language: "en", audio_config: { encoding: "pcm_s16le", sample_rate_hz: 16_000, channels: 1, sample_width_bytes: 2 } };
+    startMessage.current = { type: "session_start", sales_agent_id: input.salesAgentId, external_lead_id: input.leadId, access_token: input.accessToken, language: "en", audio_config: { encoding: "pcm_s16le", sample_rate_hz: 16_000, channels: 1, sample_width_bytes: 2 } };
     socketRef.current?.close();
     openSocket();
   }, [openSocket]);
@@ -85,6 +96,7 @@ export function useCopilotSocket({ onEvent, onSessionReset }: SocketCallbacks) {
   const disconnect = useCallback(() => {
     manualClose.current = true;
     if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+    if (heartbeatTimer.current) { clearInterval(heartbeatTimer.current); heartbeatTimer.current = null; }
     socketRef.current?.close(1000, "Call workspace closed");
     socketRef.current = null;
     setSessionId(null);

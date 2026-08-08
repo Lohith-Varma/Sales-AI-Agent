@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
+import { useQuery } from "@tanstack/react-query";
 import { BarChart3, BookOpenText, Bot, CalendarClock, ChartNoAxesCombined, ChevronLeft, CircleGauge, History, ListTodo, PanelLeftClose, Settings2, ShieldCheck, UsersRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { navigation } from "@/lib/constants/navigation";
 import { useUIStore } from "@/lib/stores/ui-store";
 import { cn } from "@/lib/utils";
+import { coreApi, queryKeys } from "@/lib/api/client";
 
 const icons = [CircleGauge, Bot, History, UsersRound, BookOpenText, BarChart3, ListTodo, CalendarClock, ChartNoAxesCombined, Settings2, ShieldCheck];
 
@@ -16,6 +18,8 @@ export function Sidebar({ mobile = false, onNavigate }: { mobile?: boolean; onNa
   const pathname = usePathname();
   const collapsed = useUIStore((state) => state.sidebarCollapsed) && !mobile;
   const setCollapsed = useUIStore((state) => state.setSidebarCollapsed);
+  const health = useQuery({ queryKey: queryKeys.coreHealth, queryFn: coreApi.health, staleTime: 30_000 });
+  const authRequired = health.data?.data.auth_required ?? false;
 
   return (
     <aside className={cn("flex h-full flex-col bg-slate-950 text-slate-300", mobile ? "w-full" : "sticky top-0 h-screen transition-[width] duration-200", collapsed ? "w-20" : "w-[280px]")}> 
@@ -40,7 +44,7 @@ export function Sidebar({ mobile = false, onNavigate }: { mobile?: boolean; onNa
         })}
       </nav>
       <div className="border-t border-white/8 p-3">
-        {collapsed ? <Button variant="ghost" size="icon" className="w-full text-slate-500 hover:bg-white/8 hover:text-white" onClick={() => setCollapsed(false)} aria-label="Expand sidebar"><ChevronLeft className="rotate-180" /></Button> : <div className="rounded-xl border border-white/8 bg-white/[.035] p-3"><div className="flex items-center gap-2 text-xs font-medium text-slate-300"><span className="size-2 rounded-full bg-amber-400" />Backend auth unavailable</div><p className="mt-1.5 text-[11px] leading-4 text-slate-500">Access is not protected until server authentication is implemented.</p></div>}
+        {collapsed ? <Button variant="ghost" size="icon" className="w-full text-slate-500 hover:bg-white/8 hover:text-white" onClick={() => setCollapsed(false)} aria-label="Expand sidebar"><ChevronLeft className="rotate-180" /></Button> : <div className="rounded-xl border border-white/8 bg-white/[.035] p-3"><div className="flex items-center gap-2 text-xs font-medium text-slate-300"><span className={`size-2 rounded-full ${authRequired ? "bg-emerald-400" : "bg-amber-400"}`} />{authRequired ? "JWT access enforced" : "Development access"}</div><p className="mt-1.5 text-[11px] leading-4 text-slate-500">{authRequired ? "Server routes and AI sessions require a signed identity." : "Production startup requires authentication and service secrets."}</p></div>}
       </div>
     </aside>
   );

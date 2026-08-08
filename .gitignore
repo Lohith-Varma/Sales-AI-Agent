@@ -58,6 +58,7 @@ pip-wheel-metadata/
 *.safetensors
 *.gguf
 .huggingface/
+data/chroma/*/
 
 # Temporary installation and test output
 .tmp-tests/
@@ -84,5 +85,5 @@ Desktop.ini
 # Local configuration and secrets
 .env
 .env.*
-!.env.example
+*.env.example
 !.env.template

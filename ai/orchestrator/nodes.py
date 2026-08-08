@@ -1,5 +1,7 @@
 """Thin LangGraph nodes adapting typed state to isolated agents."""
 
+import asyncio
+
 from ai.agents.entity.agent import EntityExtractionAgent
 from ai.agents.guardrail.agent import GuardrailAgent
 from ai.agents.intent.agent import IntentDetectionAgent
@@ -12,8 +14,11 @@ from ai.orchestrator.state import CopilotState
 from ai.schemas.analysis import IntentDetectionRequest, NextActionRequest, SentimentDetectionRequest
 from ai.schemas.entities import EntityExtractionRequest
 from ai.schemas.guardrail import GuardrailRequest
-from ai.schemas.orchestration import AgentConfidenceScores, CopilotResult
+from ai.schemas.orchestration import AgentConfidenceScores, CopilotResult, NextActionRecommendation
 from ai.schemas.rag import RetrievalRequest
+from ai.schemas.rag import RetrievalOutput
+from ai.schemas.enums import ErrorCode, NextActionType, WorkflowStage
+from ai.schemas.orchestration import WorkflowIssue
 from ai.schemas.responses import (
     ResponseGenerationOutput,
     ResponseGenerationRequest,
@@ -95,31 +100,62 @@ class WorkflowNodes:
     async def retrieve(self, state: CopilotState) -> dict[str, object]:
         utterance = state["latest_customer_utterance"]
         intent = state["intent"]
-        output = await self.rag_agent.run(
-            RetrievalRequest(
-                query=f"Intent: {intent.intent.value}\nCustomer: {utterance}",
-                intent=intent.intent,
-                top_k=self.rag_top_k,
-                fetch_k=self.rag_fetch_k,
-                minimum_relevance_score=self.rag_minimum_score,
-            )
+        request = RetrievalRequest(
+            query=f"Intent: {intent.intent.value}\nCustomer: {utterance}",
+            intent=intent.intent,
+            top_k=self.rag_top_k,
+            fetch_k=self.rag_fetch_k,
+            minimum_relevance_score=self.rag_minimum_score,
         )
-        return {"retrieval": output}
+        try:
+            output = await self.rag_agent.run(request)
+            return {"retrieval": output}
+        except Exception:
+            return {
+                "retrieval": RetrievalOutput(
+                    query=request.query,
+                    sufficient_context=False,
+                    confidence=0.0,
+                ),
+                "issues": (
+                    WorkflowIssue(
+                        stage=WorkflowStage.RETRIEVING,
+                        code=ErrorCode.RETRIEVAL_FAILED,
+                        message="Approved knowledge retrieval failed; a safe fallback was used.",
+                        recoverable=True,
+                    ),
+                ),
+            }
 
     async def generate_response(self, state: CopilotState) -> dict[str, object]:
-        output = await self.response_agent.run(
-            ResponseGenerationRequest(
-                latest_customer_utterance=state["latest_customer_utterance"],
-                conversation_context=state["conversation_context"],
-                intent=state["intent"].intent,
-                sentiment=state["sentiment"].sentiment,
-                entities=state["entity_output"].entities,
-                retrieval=state["retrieval"],
-            )
+        response_request = ResponseGenerationRequest(
+            latest_customer_utterance=state["latest_customer_utterance"],
+            conversation_context=state["conversation_context"],
+            intent=state["intent"].intent,
+            sentiment=state["sentiment"].sentiment,
+            entities=state["entity_output"].entities,
+            retrieval=state["retrieval"],
         )
-        return {"response": output}
+        action_request = NextActionRequest(
+            latest_customer_utterance=state["latest_customer_utterance"],
+            intent=state["intent"],
+            sentiment=state["sentiment"],
+            entities=state["entity_output"].entities,
+            retrieval=state["retrieval"],
+        )
+        response, action = await asyncio.gather(
+            self.response_agent.run(response_request),
+            self.next_action_agent.run(action_request),
+        )
+        return {"response": response, "next_action": action}
 
-    async def fallback_response(self, _state: CopilotState) -> dict[str, object]:
+    async def fallback_response(self, state: CopilotState) -> dict[str, object]:
+        action = NextActionRecommendation(
+            action=NextActionType.TRANSFER_TO_HUMAN_EXPERT,
+            rationale="Approved product context is unavailable, so a human expert must verify the answer.",
+            confidence=1.0,
+            requires_confirmation=True,
+        )
         return {
             "response": ResponseGenerationOutput(
                 suggestion=SuggestedResponse(
@@ -129,7 +165,8 @@ class WorkflowNodes:
                     confidence=1.0,
                 ),
                 source_chunk_count=0,
-            )
+            ),
+            "next_action": action,
         }
 
     async def recommend_action(self, state: CopilotState) -> dict[str, object]:

@@ -159,6 +159,7 @@ class ErrorCode(StrEnum):
     MODEL_UNAVAILABLE = "model_unavailable"
     RETRIEVAL_FAILED = "retrieval_failed"
     WORKFLOW_TIMEOUT = "workflow_timeout"
+    PERSISTENCE_FAILED = "persistence_failed"
     INTERNAL_ERROR = "internal_error"
 
 

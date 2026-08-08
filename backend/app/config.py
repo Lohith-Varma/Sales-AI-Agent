@@ -11,15 +11,15 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/sales_copilot"
     DATABASE_SQLITE_URL: str = "sqlite:///./sales_copilot.db"
     REDIS_URL: str = "redis://localhost:6379/0"
+    INTERNAL_API_KEY: Optional[str] = None
+    AUTH_REQUIRED: bool = False
+    JWT_SECRET: Optional[str] = None
+    JWT_ACCESS_MINUTES: int = 60
+    RATE_LIMIT_REQUESTS_PER_MINUTE: int = 240
 
     # Encryption key for PII (Must be a base64 encoded Fernet key)
     # Default fallback for testing only
     ENCRYPTION_KEY: str = "3J3V5eT3k7z2b8d9V6c7X8z9y0A1B2C3D4E5F6G7H8I="
-
-    # AI Providers
-    STT_PROVIDER: str = "mock"
-    LLM_PROVIDER: str = "mock"
-    TTS_PROVIDER: str = "mock"
 
     # API Keys
     GEMINI_API_KEY: Optional[str] = None
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     ELEVENLABS_API_KEY: Optional[str] = None
 
     # Model parameters
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str = "gemini-3.1-flash-lite"
     WHISPER_MODEL: str = "base"
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
 
@@ -35,7 +35,10 @@ class Settings(BaseSettings):
     USE_SQLITE: bool = True
 
     model_config = SettingsConfigDict(
-        env_file=os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"),
+        env_file=(
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"),
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"),
+        ),
         env_file_encoding="utf-8",
         extra="ignore"
     )

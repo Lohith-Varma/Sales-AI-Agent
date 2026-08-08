@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import hashlib
 from pathlib import Path
 from typing import Annotated
 
@@ -38,6 +39,13 @@ async def ingest_document(
             temporary_path = Path(handle.name)
         result = await container.document_service.ingest_paths(
             [temporary_path], title=title, version=version
+        )
+        await container.core_persistence.register_knowledge_document(
+            title=title or Path(file.filename or "upload").stem,
+            source=file.filename or "upload",
+            version=version,
+            chunk_count=result.chunk_count,
+            content_sha256=hashlib.sha256(payload).hexdigest(),
         )
         return DocumentIngestionResponse(result=result)
     finally:

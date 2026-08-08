@@ -7,7 +7,9 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from ai import __version__
 from ai.api.copilot import router as copilot_router
@@ -18,6 +20,7 @@ from ai.api.websocket import router as websocket_router
 from ai.config.container import build_container
 from ai.config.logging import configure_logging, get_logger
 from ai.config.settings import Settings, get_settings
+from ai.security import verify_access_token
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -29,13 +32,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.container = build_container(resolved_settings)
+        if resolved_settings.app_env.value != "test":
+            try:
+                products = await app.state.container.core_persistence.fetch_approved_products()
+                if products:
+                    result = await app.state.container.document_service.ingest_product_records(products)
+                    get_logger("application").info(
+                        "core_knowledge_synchronized",
+                        documents=result.document_count,
+                        chunks=result.chunk_count,
+                    )
+            except Exception as exc:
+                get_logger("application").warning(
+                    "core_knowledge_sync_failed", exception_type=type(exc).__name__
+                )
         get_logger("application").info(
             "application_started",
             version=__version__,
             environment=resolved_settings.app_env,
         )
-        yield
-        get_logger("application").info("application_stopped")
+        try:
+            yield
+        finally:
+            await app.state.container.core_persistence.close()
+            get_logger("application").info("application_stopped")
 
     docs_url = "/docs" if resolved_settings.enable_api_docs else None
     app = FastAPI(
@@ -53,6 +73,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["GET", "POST"],
         allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
     )
+
+    @app.middleware("http")
+    async def authenticate_ai_request(request: Request, call_next):
+        public = request.url.path in {"/health", "/ready", "/docs", "/openapi.json"}
+        if resolved_settings.auth_required and not public:
+            authorization = request.headers.get("authorization", "")
+            token = authorization.split(" ", 1)[1] if authorization.lower().startswith("bearer ") else None
+            try:
+                verify_access_token(
+                    token,
+                    resolved_settings.jwt_secret.get_secret_value()
+                    if resolved_settings.jwt_secret
+                    else None,
+                )
+            except (ValueError, TypeError):
+                return JSONResponse(status_code=401, content={"detail": "Invalid or missing access token"})
+        return await call_next(request)
     register_exception_handlers(app)
     app.include_router(health_router)
     app.include_router(copilot_router, prefix=resolved_settings.api_prefix)

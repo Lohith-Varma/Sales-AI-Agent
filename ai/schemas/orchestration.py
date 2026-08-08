@@ -57,6 +57,17 @@ class NextActionRecommendation(SchemaModel):
     suggested_follow_up_date: date | None = None
     requires_confirmation: bool = True
 
+    @model_validator(mode="before")
+    @classmethod
+    def discard_irrelevant_follow_up_date(cls, value: object) -> object:
+        """Ignore harmless provider metadata on non-follow-up actions."""
+
+        if isinstance(value, dict) and value.get("action") != NextActionType.SCHEDULE_FOLLOW_UP:
+            normalized = dict(value)
+            normalized["suggested_follow_up_date"] = None
+            return normalized
+        return value
+
     @model_validator(mode="after")
     def validate_follow_up_date(self) -> Self:
         """Permit a date only for a schedule-follow-up recommendation."""

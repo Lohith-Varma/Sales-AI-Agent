@@ -165,6 +165,18 @@ class WorkflowTimeoutError(AppError):
         self.timeout_seconds = timeout_seconds
 
 
+class PersistenceError(AppError):
+    """Raised when a retry-bounded core CRM write does not succeed."""
+
+    def __init__(self, message: str = "Core CRM persistence failed") -> None:
+        super().__init__(
+            message,
+            code=ErrorCode.PERSISTENCE_FAILED,
+            public_message="The CRM update could not be saved. Please retry.",
+            retryable=True,
+        )
+
+
 __all__ = [
     "AppError",
     "ConfigurationError",
@@ -173,6 +185,7 @@ __all__ = [
     "InvalidRequestError",
     "MessageTooLargeError",
     "ModelUnavailableError",
+    "PersistenceError",
     "RetrievalError",
     "SessionLimitReachedError",
     "SessionNotFoundError",

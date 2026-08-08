@@ -59,6 +59,7 @@ class SessionStartMessage(SchemaModel):
     external_lead_id: ExternalReference | None = None
     language: Annotated[str, Field(min_length=2, max_length=16)] | None = "en"
     audio_config: AudioConfiguration = Field(default_factory=AudioConfiguration)
+    access_token: Annotated[str, Field(min_length=20, max_length=4096)] | None = None
 
 
 class AudioConfigMessage(SchemaModel):

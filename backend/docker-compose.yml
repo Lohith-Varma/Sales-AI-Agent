@@ -33,24 +33,9 @@ services:
       timeout: 5s
       retries: 5
 
-  # The FastAPI application service and worker services will be added here once containerized running is needed
-  # web:
-  #   build: .
-  #   container_name: sales_copilot_web
-  #   ports:
-  #     - "8000:8000"
-  #   environment:
-  #     - DATABASE_URL=postgresql://postgres:postgres@db:5432/sales_copilot
-  #     - REDIS_URL=redis://redis:6379/0
-  #     - ENCRYPTION_KEY=3J3V5eT3k7z2b8d9V6c7X8z9y0A1B2C3D4E5F6G7H8I=
-  #     - STT_PROVIDER=mock
-  #     - LLM_PROVIDER=mock
-  #     - TTS_PROVIDER=mock
-  #   depends_on:
-  #     db:
-  #       condition: service_healthy
-  #     redis:
-  #       condition: service_healthy
+  # Run the core, AI, and frontend processes with the variables documented in
+  # ../.env.example. Production startup requires JWT_SECRET,
+  # INTERNAL_API_KEY, ENCRYPTION_KEY, and GEMINI_API_KEY.
 
 volumes:
   postgres_data:

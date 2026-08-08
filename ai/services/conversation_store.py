@@ -10,6 +10,7 @@ from uuid import UUID
 
 from ai.schemas.entities import CustomerEntities
 from ai.schemas.speech import AudioConfiguration, TranscriptSegment
+from ai.schemas.orchestration import CopilotResult
 from ai.utils.exceptions import SessionNotFoundError
 from ai.utils.time import utc_now
 
@@ -28,6 +29,7 @@ class ConversationSession:
     transcript: list[TranscriptSegment] = field(default_factory=list)
     entities: CustomerEntities = field(default_factory=CustomerEntities)
     ended_at: datetime | None = None
+    last_result: CopilotResult | None = None
 
 
 class ConversationStore(Protocol):

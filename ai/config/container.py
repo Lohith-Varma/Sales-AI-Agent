@@ -31,6 +31,7 @@ from ai.services.chroma_store import ChromaVectorStore
 from ai.services.conversation_store import InMemoryConversationStore
 from ai.services.document_service import DocumentService
 from ai.services.session_manager import SessionManager
+from ai.services.core_persistence import CorePersistenceClient
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +44,7 @@ class ApplicationContainer:
     session_manager: SessionManager
     conversation_store: InMemoryConversationStore
     vector_store: ChromaVectorStore
+    core_persistence: CorePersistenceClient
 
 
 def build_container(settings: Settings) -> ApplicationContainer:
@@ -115,6 +117,7 @@ def build_container(settings: Settings) -> ApplicationContainer:
         crm_agent=crm,
         live_timeout_seconds=settings.live_workflow_timeout_seconds,
         crm_timeout_seconds=settings.crm_workflow_timeout_seconds,
+        safe_fallback=settings.safe_fallback_response,
     )
     loader = KnowledgeDocumentLoader(
         supported_extensions=settings.supported_document_extensions,
@@ -142,6 +145,14 @@ def build_container(settings: Settings) -> ApplicationContainer:
         maximum_audio_bytes=settings.max_audio_buffer_bytes,
         maximum_duration_seconds=settings.session_max_duration_seconds,
     )
+    core_persistence = CorePersistenceClient(
+        base_url=settings.core_api_url,
+        internal_api_key=(
+            settings.internal_api_key.get_secret_value() if settings.internal_api_key else None
+        ),
+        timeout_seconds=settings.core_persistence_timeout_seconds,
+        max_retries=settings.core_persistence_max_retries,
+    )
     return ApplicationContainer(
         settings=settings,
         workflow=workflow,
@@ -149,6 +160,7 @@ def build_container(settings: Settings) -> ApplicationContainer:
         session_manager=session_manager,
         conversation_store=conversation_store,
         vector_store=vector_store,
+        core_persistence=core_persistence,
     )
 
 
