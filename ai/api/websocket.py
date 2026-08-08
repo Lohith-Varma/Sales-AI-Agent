@@ -94,6 +94,8 @@ async def _process_audio(
             known_entities=session.entities,
         )
     )
+    if not result.latest_transcript.strip():
+        return None
     segment = TranscriptSegment(
         text=result.latest_transcript,
         start_seconds=0,

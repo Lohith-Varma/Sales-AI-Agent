@@ -58,6 +58,8 @@ app = FastAPI(
 
 # CORS configuration restricted to the React frontend addresses
 origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
     "http://localhost:5173",
     "http://127.0.0.1:5173"
 ]
@@ -455,6 +457,6 @@ def get_clauses(db: Session = Depends(get_db)):
     }
 
 
-# Mount the API router with /api prefix
+# Mount the API routers
 app.include_router(api_router)
 app.include_router(platform_router)

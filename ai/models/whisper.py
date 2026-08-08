@@ -91,7 +91,13 @@ class WhisperSpeechModel:
 
         full_text = str(raw.get("text", "")).strip()
         if not segments or not full_text:
-            raise TranscriptionError("Whisper produced no speech text", retryable=False)
+            return TranscriptionOutput(
+                segments=(),
+                full_text="",
+                detected_language=str(raw.get("language") or request.language or "unknown"),
+                audio_duration_seconds=duration,
+                processing_duration_ms=timer.elapsed_milliseconds,
+            )
         return TranscriptionOutput(
             segments=tuple(segments),
             full_text=full_text,

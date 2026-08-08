@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     jwt_secret: SecretStr | None = None
 
     # Core CRM integration. Set CORE_API_URL empty for isolated AI-only runs.
-    core_api_url: str | None = "http://127.0.0.1:8000"
+    core_api_url: str | None = "http://127.0.0.1:8001"
     internal_api_key: SecretStr | None = None
     core_persistence_timeout_seconds: PositiveSeconds = 2.0
     core_persistence_max_retries: Annotated[int, Field(ge=0, le=5)] = 2

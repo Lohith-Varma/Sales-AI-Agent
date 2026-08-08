@@ -98,6 +98,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
+app = create_app()
+
+
 def run() -> None:
     """Run the ASGI service using environment-derived settings."""
 
@@ -116,4 +119,4 @@ if __name__ == "__main__":
     run()
 
 
-__all__ = ["create_app", "run"]
+__all__ = ["app", "create_app", "run"]

@@ -28,7 +28,7 @@ export function useCopilotSocket({ onEvent, onSessionReset }: SocketCallbacks) {
   const openSocket = useCallback(() => {
     const message = startMessage.current;
     if (!message) return;
-    const url = process.env.NEXT_PUBLIC_AI_WS_URL ? `${process.env.NEXT_PUBLIC_AI_WS_URL.replace(/\/$/, "")}/ws/copilot` : "ws://127.0.0.1:8001/ws/copilot";
+    const url = process.env.NEXT_PUBLIC_AI_WS_URL ? `${process.env.NEXT_PUBLIC_AI_WS_URL.replace(/\/$/, "")}/ws/copilot` : "ws://127.0.0.1:8000/ws/copilot";
     setStatus(retryCount.current ? "reconnecting" : "connecting");
     setError(null);
     const socket = new WebSocket(url);
