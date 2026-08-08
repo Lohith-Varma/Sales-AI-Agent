@@ -7,8 +7,8 @@ export async function proxyRequest(
 ) {
   const { path } = await context.params;
   const base = service === "core"
-    ? process.env.CORE_API_URL ?? "http://127.0.0.1:8001"
-    : process.env.AI_API_URL ?? "http://127.0.0.1:8000";
+    ? process.env.CORE_API_URL ?? process.env.NEXT_PUBLIC_CORE_API_URL ?? "http://127.0.0.1:8001"
+    : process.env.AI_API_URL ?? process.env.NEXT_PUBLIC_AI_API_URL ?? "http://127.0.0.1:8000";
 
   const incoming = new URL(request.url);
   const normalizedBase = base.endsWith("/") ? base : `${base}/`;
