@@ -1,12 +1,12 @@
 import pytest
+from app.db.base import Base, Call, Customer, KYCDoc, Transcript, User
+from app.db.database import get_db
+from app.main import app
+from app.security import hash_password
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-
-from app.db.base import Base, Call, Customer, KYCDoc, Transcript
-from app.db.database import get_db
-from app.main import app
 
 
 @pytest.fixture()
@@ -83,3 +83,27 @@ def test_transcript_endpoint_returns_transparently_decrypted_text(api_database):
 
     assert response.status_code == 200
     assert response.json()["data"]["transcripts"][0]["text"] == "Please call me tomorrow."
+
+
+def test_authorized_sales_agent_can_log_in(api_database, monkeypatch):
+    client, session = api_database
+    monkeypatch.setattr("app.security.settings.JWT_SECRET", "test-jwt-secret-with-sufficient-entropy")
+    session.add(
+        User(
+            email="agent@example.test",
+            display_name="Demo Sales Agent",
+            password_hash=hash_password("correct-horse-battery-staple"),
+            role="agent",
+        )
+    )
+    session.commit()
+
+    response = client.post(
+        "/api/auth/login",
+        json={"email": "agent@example.test", "password": "correct-horse-battery-staple"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["token_type"] == "bearer"
+    assert response.json()["user"]["role"] == "agent"
+    assert len(response.json()["access_token"].split(".")) == 3

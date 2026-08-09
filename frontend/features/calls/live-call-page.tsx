@@ -89,6 +89,7 @@ export function LiveCallPage() {
     defaultValues: { utterance: "" },
   });
   const noteRef = useRef<HTMLTextAreaElement>(null);
+  const utteranceSequenceRef = useRef(0);
   const note = useUIStore((state) =>
     callId ? (state.callNotes[callId] ?? "") : "",
   );
@@ -312,7 +313,13 @@ export function LiveCallPage() {
             ? "AI Connection Error"
             : "AI Disconnected";
   const canStream = consent && socket.status === "connected";
-
+  const signalUtteranceEnd = useCallback(() => {
+    socket.sendControl({
+      type: "utterance_end",
+      sequence_number: utteranceSequenceRef.current,
+    });
+    utteranceSequenceRef.current += 1;
+  }, [socket]);
   const endCall = async () => {
     audioPlayer.stop();
     await microphone.stop();
@@ -547,7 +554,7 @@ export function LiveCallPage() {
                   onClick={() =>
                     microphone.status === "active"
                       ? void microphone.stop()
-                      : void microphone.start(socket.sendAudio)
+                      : void microphone.start(socket.sendAudio, signalUtteranceEnd)
                   }
                 >
                   {microphone.status === "requesting" ? (

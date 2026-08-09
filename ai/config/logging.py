@@ -107,12 +107,10 @@ def configure_logging(settings: Settings) -> None:
         ],
     )
 
-    import io
-    if hasattr(sys.stderr, "buffer"):
-        stream = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
-    else:
-        stream = sys.stderr
-    handler = logging.StreamHandler(stream)
+    # Keep the active stderr object owned by the host/test runner. Wrapping
+    # ``sys.stderr.buffer`` in a new TextIOWrapper closes the shared stream when
+    # logging is reconfigured, which breaks subsequent application factories.
+    handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(formatter)
 
 

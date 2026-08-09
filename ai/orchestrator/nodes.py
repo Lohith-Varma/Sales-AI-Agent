@@ -1,6 +1,7 @@
 """Thin LangGraph nodes adapting typed state to isolated agents."""
 
 import asyncio
+from datetime import timedelta
 
 from ai.agents.entity.agent import EntityExtractionAgent
 from ai.agents.guardrail.agent import GuardrailAgent
@@ -11,19 +12,27 @@ from ai.agents.response.agent import ResponseGenerationAgent
 from ai.agents.sentiment.agent import SentimentAgent
 from ai.agents.speech.agent import SpeechToTextAgent
 from ai.orchestrator.state import CopilotState
-from ai.schemas.analysis import IntentDetectionRequest, NextActionRequest, SentimentDetectionRequest
+from ai.schemas.analysis import (
+    IntentDetectionRequest,
+    NextActionRequest,
+    SentimentDetectionRequest,
+)
 from ai.schemas.entities import EntityExtractionRequest
+from ai.schemas.enums import ErrorCode, IntentType, NextActionType, WorkflowStage
 from ai.schemas.guardrail import GuardrailRequest
-from ai.schemas.orchestration import AgentConfidenceScores, CopilotResult, NextActionRecommendation
-from ai.schemas.rag import RetrievalRequest
-from ai.schemas.rag import RetrievalOutput
-from ai.schemas.enums import ErrorCode, NextActionType, WorkflowStage
-from ai.schemas.orchestration import WorkflowIssue
+from ai.schemas.orchestration import (
+    AgentConfidenceScores,
+    CopilotResult,
+    NextActionRecommendation,
+    WorkflowIssue,
+)
+from ai.schemas.rag import RetrievalOutput, RetrievalRequest
 from ai.schemas.responses import (
     ResponseGenerationOutput,
     ResponseGenerationRequest,
     SuggestedResponse,
 )
+from ai.utils.time import utc_now
 
 
 class WorkflowNodes:
@@ -110,7 +119,7 @@ class WorkflowNodes:
         try:
             output = await self.rag_agent.run(request)
             return {"retrieval": output}
-        except Exception:
+        except Exception:  # noqa: BLE001 - retrieval must fail closed to the safe fallback
             return {
                 "retrieval": RetrievalOutput(
                     query=request.query,
@@ -150,16 +159,32 @@ class WorkflowNodes:
         return {"response": response, "next_action": action}
 
     async def fallback_response(self, state: CopilotState) -> dict[str, object]:
-        action = NextActionRecommendation(
-            action=NextActionType.TRANSFER_TO_HUMAN_EXPERT,
-            rationale="Approved product context is unavailable, so a human expert must verify the answer.",
-            confidence=1.0,
-            requires_confirmation=True,
+        follow_up = state["intent"].intent is IntentType.FOLLOW_UP
+        action = (
+            NextActionRecommendation(
+                action=NextActionType.SCHEDULE_FOLLOW_UP,
+                rationale="The customer asked for time; the sales agent should confirm a suitable follow-up date.",
+                confidence=0.98,
+                suggested_follow_up_date=utc_now().date() + timedelta(days=1),
+                requires_confirmation=True,
+            )
+            if follow_up
+            else NextActionRecommendation(
+                action=NextActionType.TRANSFER_TO_HUMAN_EXPERT,
+                rationale="Approved product context is unavailable, so a human expert must verify the answer.",
+                confidence=1.0,
+                requires_confirmation=True,
+            )
+        )
+        text = (
+            "Acknowledge that the customer needs time and ask when the sales agent may follow up."
+            if follow_up
+            else self.safe_fallback
         )
         return {
             "response": ResponseGenerationOutput(
                 suggestion=SuggestedResponse(
-                    text=self.safe_fallback,
+                    text=text,
                     is_fallback=True,
                     requires_human_review=True,
                     confidence=1.0,

@@ -6,16 +6,14 @@ import asyncio
 import json
 import os
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import httpx
 import websockets
 
-
 CORE = os.getenv("QA_CORE_URL", "http://127.0.0.1:8000")
-AI = os.getenv("QA_AI_URL", "http://127.0.0.1:8000")
-WS = os.getenv("QA_AI_WS_URL", "ws://127.0.0.1:8000/ws/copilot")
-
+AI = os.getenv("QA_AI_URL", "http://127.0.0.1:8001")
+WS = os.getenv("QA_AI_WS_URL", "ws://127.0.0.1:8001/ws/copilot")
 TOKEN = os.getenv("QA_ACCESS_TOKEN")
 
 
@@ -94,30 +92,46 @@ async def main() -> None:
                 break
         heartbeat_ms = (time.perf_counter() - ping_started) * 1_000
 
-        utterance = (
-            "I want to buy an item for nine thousand rupees. Please explain the approved "
-            "Pay-in-3 terms. I agree to proceed with KYC, and schedule a follow-up for tomorrow."
-        )
-        analysis, analysis_ms = await request(
-            client,
-            "POST",
-            f"{AI}/api/v1/copilot/analyze-text",
-            json={
-                "session_id": session_id,
-                "sequence_number": 0,
-                "customer_utterance": utterance,
-            },
-        )
-        assert analysis["retrieved_context"], "RAG returned no approved context"
-        assert not analysis["suggested_response"]["is_fallback"], analysis["issues"]
-        assert analysis["suggested_response"]["citation_chunk_ids"], "Response has no citations"
-        assert analysis["guardrail"]["is_safe"] and analysis["guardrail"]["is_grounded"]
+        utterances = [
+            "I heard about Pay-in-3. Can you tell me if I'm eligible?",
+            "What documents do I need?",
+            "I'll think about it.",
+        ]
+        analyses: list[dict] = []
+        analysis_latencies: list[float] = []
+        for sequence_number, utterance in enumerate(utterances):
+            turn, turn_ms = await request(
+                client,
+                "POST",
+                f"{AI}/api/v1/copilot/analyze-text",
+                json={
+                    "session_id": session_id,
+                    "sequence_number": sequence_number,
+                    "customer_utterance": utterance,
+                },
+            )
+            analyses.append(turn)
+            analysis_latencies.append(turn_ms)
+
+        eligibility, kyc_turn, follow_up = analyses
+        assert eligibility["intent"] == "eligibility"
+        assert eligibility["retrieved_context"], "Eligibility RAG returned no context"
+        assert eligibility["suggested_response"]["citation_chunk_ids"]
+        assert not eligibility["suggested_response"]["is_fallback"]
+        assert kyc_turn["intent"] == "kyc"
+        assert kyc_turn["retrieved_context"], "KYC RAG returned no context"
+        assert kyc_turn["suggested_response"]["citation_chunk_ids"]
+        assert follow_up["intent"] == "follow_up"
+        assert follow_up["next_best_action"]["action"] == "schedule_follow_up"
+        assert follow_up["next_best_action"]["requires_confirmation"] is True
+        assert all(turn["guardrail"]["is_safe"] for turn in analyses)
+        analysis = follow_up
 
         call_after_ai, db_read_ms = await request(client, "GET", f"{CORE}/api/calls/{call_id}")
-        assert len(call_after_ai["data"]["transcripts"]) == 1
-        assert len(call_after_ai["data"]["insights"]) == 1
-        assert len(call_after_ai["data"]["suggestions"]) == 1
-        suggestion_id = call_after_ai["data"]["suggestions"][0]["id"]
+        assert len(call_after_ai["data"]["transcripts"]) == 3
+        assert len(call_after_ai["data"]["insights"]) == 3
+        assert len(call_after_ai["data"]["suggestions"]) == 3
+        suggestion_id = call_after_ai["data"]["suggestions"][-1]["id"]
         await request(
             client,
             "POST",
@@ -200,8 +214,21 @@ async def main() -> None:
             "intent": analysis["intent"],
             "sentiment": analysis["sentiment"],
             "next_action": analysis["next_best_action"]["action"],
-            "retrieved_chunks": len(analysis["retrieved_context"]),
-            "citations": analysis["suggested_response"]["citation_chunk_ids"],
+            "turns": [
+                {
+                    "intent": turn["intent"],
+                    "sentiment": turn["sentiment"],
+                    "retrieved_chunks": len(turn["retrieved_context"]),
+                    "next_action": turn["next_best_action"]["action"],
+                }
+                for turn in analyses
+            ],
+            "retrieved_chunks": sum(len(turn["retrieved_context"]) for turn in analyses),
+            "citations": [
+                citation
+                for turn in analyses
+                for citation in turn["suggested_response"]["citation_chunk_ids"]
+            ],
             "lead_score": crm["crm_summary"]["lead_score"]["score"],
             "follow_up_date": crm["crm_summary"]["follow_up_date"],
             "latency_ms": {
@@ -210,7 +237,8 @@ async def main() -> None:
                 "consent_api": round(consent_ms, 1),
                 "websocket_connect": round(connect_ms, 1),
                 "websocket_heartbeat": round(heartbeat_ms, 1),
-                "copilot_analysis": round(analysis_ms, 1),
+                "copilot_analysis_turns": [round(value, 1) for value in analysis_latencies],
+                "copilot_analysis_total": round(sum(analysis_latencies), 1),
                 "database_call_read": round(db_read_ms, 1),
                 "websocket_reconnect_and_recovery": round(reconnect_ms, 1),
                 "crm_generation_and_persistence": round(crm_ms, 1),

@@ -283,7 +283,7 @@ variables. The eventual `.env.example` will document the complete set, including
 APP_ENV=development
 LOG_LEVEL=INFO
 GEMINI_API_KEY=replace-me
-GEMINI_MODEL=gemini-3.1-flash-lite
+GEMINI_MODEL=gemini-flash-lite-latest
 WHISPER_MODEL=base
 EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 CHROMA_PERSIST_DIRECTORY=./data/chroma
@@ -297,15 +297,15 @@ use a secrets manager and explicit allowed origins rather than permissive CORS.
 
 ## Local development
 
-The application will support the following workflow after all modules are added:
+Install the existing services and frontend without changing their architecture:
 
 ```bash
 python -m venv .venv
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+python -m pip install -r requirements.txt
 cp .env.example .env
-python scripts/ingest_documents.py --source data/documents
-uvicorn ai.main:create_app --factory --reload
+cd frontend && npm install && cd ..
+cd backend && alembic upgrade head && cd ..
 ```
 
 Windows PowerShell equivalent for the environment file:
@@ -322,6 +322,36 @@ ruff format --check ai tests
 mypy ai
 pytest
 ```
+
+Run the complete local demo in three PowerShell terminals after copying
+`.env.example` to `.env` and `frontend/.env.example` to `frontend/.env.local`:
+
+```powershell
+# Terminal 1: SQLAlchemy core API
+Set-Location backend
+..\.venv\Scripts\python.exe -m alembic upgrade head
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+
+# Terminal 2: AI/LangGraph/Whisper/Chroma service
+.\.venv\Scripts\python.exe -m uvicorn ai.main:create_app --factory --host 127.0.0.1 --port 8001 --reload
+
+# Terminal 3: sales-agent UI
+Set-Location frontend
+npm run dev
+```
+
+For a login-enforced demo, set `AUTH_REQUIRED=true`, configure the same strong
+`JWT_SECRET` in the core and AI environments, create an authorized agent, and
+then start the services:
+
+```powershell
+Set-Location backend
+..\.venv\Scripts\python.exe scripts\create_user.py --email agent@example.com --name "Demo Agent" --role agent
+```
+
+The script prompts for a password and stores only its PBKDF2 hash. Development
+mode may leave `AUTH_REQUIRED=false`; consent is still mandatory before the
+microphone control is enabled.
 
 ## Security and compliance boundaries
 

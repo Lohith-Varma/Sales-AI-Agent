@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     app_name: str = "Pay-in-3 AI Voice Sales Co-Pilot"
     app_env: AppEnvironment = AppEnvironment.DEVELOPMENT
     app_host: str = "0.0.0.0"
-    app_port: Port = 8000
+    app_port: Port = 8001
     app_debug: bool = False
     app_version: str = "0.1.0"
     allowed_origins: tuple[str, ...] = (
@@ -79,7 +79,6 @@ class Settings(BaseSettings):
 
     # Core CRM integration. Set CORE_API_URL empty for isolated AI-only runs.
     core_api_url: str | None = "http://127.0.0.1:8000"
-
     internal_api_key: SecretStr | None = None
     core_persistence_timeout_seconds: PositiveSeconds = 2.0
     core_persistence_max_retries: Annotated[int, Field(ge=0, le=5)] = 2
@@ -92,7 +91,7 @@ class Settings(BaseSettings):
 
     # Gemini
     gemini_api_key: SecretStr
-    gemini_model: str = "gemini-3.1-flash-lite"
+    gemini_model: str = "gemini-flash-lite-latest"
     gemini_request_timeout_seconds: PositiveSeconds = 20
     gemini_max_retries: Annotated[int, Field(ge=0, le=5)] = 2
     gemini_analysis_temperature: Probability = 0.0
@@ -113,7 +112,9 @@ class Settings(BaseSettings):
     audio_channels: Annotated[int, Field(ge=1, le=2)] = 1
     audio_sample_width_bytes: Annotated[int, Field(ge=1, le=4)] = 2
     audio_chunk_duration_ms: Annotated[int, Field(ge=20, le=1_000)] = 100
-    transcription_window_seconds: Annotated[float, Field(ge=0.5, le=30)] = 3.0
+    # Safety ceiling for a continuous utterance. Normal turns are flushed sooner
+    # by the browser's pause detector through the utterance_end control message.
+    transcription_window_seconds: Annotated[float, Field(ge=0.5, le=30)] = 12.0
     max_audio_buffer_seconds: Annotated[float, Field(ge=1, le=120)] = 15.0
     max_websocket_message_bytes: Annotated[int, Field(ge=1_024, le=10_485_760)] = 262_144
 

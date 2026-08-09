@@ -16,7 +16,7 @@ from ai.config.logging import get_logger
 from ai.orchestrator.state import LiveWorkflowInput
 from ai.schemas.common import RequestContext, SchemaModel
 from ai.schemas.crm import CRMGenerationRequest
-from ai.schemas.enums import ErrorCode
+from ai.schemas.enums import ErrorCode, SpeakerRole
 from ai.schemas.orchestration import CopilotResult
 from ai.schemas.requests import (
     AudioConfigMessage,
@@ -38,9 +38,9 @@ from ai.schemas.responses_api import (
     TranscriptEvent,
 )
 from ai.schemas.speech import AudioChunk, TranscriptionRequest, TranscriptSegment
+from ai.security import verify_access_token
 from ai.services.audio_buffer import AudioBuffer
 from ai.services.session_recovery import recover_session_context
-from ai.security import verify_access_token
 from ai.utils.exceptions import AppError, InvalidRequestError
 from ai.utils.time import utc_now
 

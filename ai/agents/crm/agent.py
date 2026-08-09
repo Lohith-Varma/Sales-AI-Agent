@@ -1,6 +1,6 @@
 """Post-call CRM summary agent with deterministic lead scoring."""
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Annotated
 
 from pydantic import Field
@@ -10,8 +10,9 @@ from ai.models.llm import StructuredLLM
 from ai.prompts.crm import CRM_SYSTEM_PROMPT
 from ai.schemas.common import Confidence, SchemaModel
 from ai.schemas.crm import CRMGenerationOutput, CRMGenerationRequest, CRMSummary
-from ai.schemas.enums import LeadStatus
+from ai.schemas.enums import LeadStatus, NextActionType
 from ai.utils.json import dump_json
+from ai.utils.time import utc_now
 
 
 class _CRMDraft(SchemaModel):
@@ -45,12 +46,20 @@ class CRMSummaryAgent:
             output_type=_CRMDraft,
             temperature=self._temperature,
         )
+        follow_up_required = (
+            request.recommended_action is NextActionType.SCHEDULE_FOLLOW_UP
+            or draft.lead_status is LeadStatus.FOLLOW_UP_REQUIRED
+        )
         summary = CRMSummary(
             call_summary=draft.call_summary,
             lead_score=self._lead_scorer.score(request),
-            follow_up_date=draft.follow_up_date,
+            follow_up_date=(
+                draft.follow_up_date or utc_now().date() + timedelta(days=1)
+                if follow_up_required
+                else None
+            ),
             customer_concern=draft.customer_concern,
-            lead_status=draft.lead_status,
+            lead_status=(LeadStatus.FOLLOW_UP_REQUIRED if follow_up_required else draft.lead_status),
             important_notes=draft.important_notes,
         )
         return CRMGenerationOutput(crm_summary=summary, confidence=draft.confidence)

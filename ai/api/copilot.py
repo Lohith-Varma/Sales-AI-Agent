@@ -3,24 +3,29 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from typing import Annotated
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
-
+from fastapi import APIRouter, Depends
 
 from ai.api.dependencies import get_container
 from ai.config.container import ApplicationContainer
 from ai.orchestrator.state import LiveWorkflowInput
 from ai.schemas.common import RequestContext
+from ai.schemas.crm import CRMGenerationOutput, CRMGenerationRequest
 from ai.schemas.enums import ErrorCode, SpeakerRole, WorkflowStage
 from ai.schemas.orchestration import CopilotResult, WorkflowIssue
-from ai.schemas.requests import AnalyzeTextRequest, CreateSessionRequest, CompleteCallRequest
-from ai.schemas.crm import CRMGenerationOutput, CRMGenerationRequest
-from ai.utils.time import utc_now
+from ai.schemas.requests import (
+    AnalyzeTextRequest,
+    CompleteCallRequest,
+    CreateSessionRequest,
+)
 from ai.schemas.responses_api import SessionCreatedResponse
 from ai.schemas.speech import TranscriptSegment
 from ai.services.session_recovery import recover_session_context
+from ai.utils.exceptions import InvalidRequestError, PersistenceError
+from ai.utils.time import utc_now
 
 router = APIRouter(prefix="/copilot", tags=["copilot"])
 
@@ -102,50 +107,43 @@ async def analyze_text(
     return result
 
 
-from ai.utils.exceptions import AppError, SessionNotFoundError
-
 async def _execute_complete_call(
-    session_id_str: str,
-    ended_at_override: Any | None,
+    session_id_value: UUID | str,
+    ended_at_override: datetime | None,
     container: ApplicationContainer,
 ) -> CRMGenerationOutput:
     try:
-        session = await container.conversation_store.get(session_id_str)
-    except SessionNotFoundError:
-        try:
-            live = await container.session_manager.get(session_id_str)
-            session = await container.conversation_store.create_session(
-                session_id=session_id_str,
-                sales_agent_id=str(live.sales_agent_id),
-                external_lead_id=live.external_lead_id,
-            )
-        except Exception:
-            raise HTTPException(status_code=404, detail=f"Session {session_id_str} not found")
-
+        session_id = UUID(str(session_id_value))
+    except ValueError as exc:
+        raise InvalidRequestError("Session ID must be a valid UUID") from exc
+    await container.session_manager.get(session_id)
+    session = await container.conversation_store.get(session_id)
     last_result = session.last_result
-
-    if last_result is None and not session.transcript:
-        raise HTTPException(status_code=400, detail="Cannot summarize a call without a transcript")
+    if last_result is None or not session.transcript:
+        raise InvalidRequestError("Cannot summarize a call without analyzed transcript")
     ended_at = ended_at_override or utc_now()
     crm = await container.workflow.run_crm(
         CRMGenerationRequest(
             transcript="\n".join(
                 f"{segment.speaker.value}: {segment.text}"
                 for segment in session.transcript
-            ) or "Customer discussed Pay-in-3 product features.",
-            primary_intent=last_result.intent if last_result else "eligibility",
-            final_sentiment=last_result.sentiment if last_result else "positive",
-            entities=last_result.entities if last_result else {},
-            recommended_action=last_result.next_best_action.action if last_result else "explain_benefits",
+            ),
+            primary_intent=last_result.intent,
+            final_sentiment=last_result.sentiment,
+            entities=last_result.entities,
+            recommended_action=last_result.next_best_action.action,
             call_started_at=session.created_at,
             call_ended_at=ended_at,
         )
     )
-    await container.core_persistence.persist_crm_summary(
+    persisted = await container.core_persistence.persist_crm_summary(
         session.external_lead_id,
         crm.crm_summary.model_dump(mode="json"),
         requires_human_review=crm.requires_human_review,
     )
+    if not persisted:
+        raise PersistenceError()
+    await container.session_manager.close(session_id, ended_at=ended_at)
     return crm
 
 
@@ -155,12 +153,12 @@ async def complete_call_body(
     request: CompleteCallRequest,
     container: Annotated[ApplicationContainer, Depends(get_container)],
 ) -> CRMGenerationOutput:
-    return await _execute_complete_call(str(request.session_id), request.ended_at, container)
+    return await _execute_complete_call(request.session_id, request.ended_at, container)
 
 
 @router.post("/sessions/{session_id}/complete", response_model=CRMGenerationOutput)
 async def complete_call_path(
-    session_id: str,
+    session_id: UUID,
     container: Annotated[ApplicationContainer, Depends(get_container)],
 ) -> CRMGenerationOutput:
     return await _execute_complete_call(session_id, None, container)

@@ -4,6 +4,14 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import sys
+from pathlib import Path
+
+# Direct execution sets sys.path[0] to backend/scripts. Add the backend root so
+# the documented ``python scripts/create_user.py`` command can import ``app``.
+backend_root = Path(__file__).resolve().parents[1]
+if str(backend_root) not in sys.path:
+    sys.path.insert(0, str(backend_root))
 
 from app.db.base import User
 from app.db.database import SessionLocal
